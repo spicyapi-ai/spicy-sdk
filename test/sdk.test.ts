@@ -1143,3 +1143,162 @@ void test("a platform envelope missing only its code is still read as the platfo
     return true;
   });
 });
+
+/* Node.js fetch ignores HTTPS_PROXY unless NODE_USE_ENV_PROXY=1, while curl in the same shell
+   honors it. These pin the diagnosis the SDK adds when that mismatch is the likely story. */
+
+const PROXY_ENV_NAMES = [
+  "https_proxy",
+  "HTTPS_PROXY",
+  "http_proxy",
+  "HTTP_PROXY",
+  "NODE_USE_ENV_PROXY",
+  "NODE_OPTIONS",
+] as const;
+
+/* Runs `body` with exactly the given proxy variables, whatever the shell running the tests has. */
+async function withProxyEnv(
+  values: Partial<Record<(typeof PROXY_ENV_NAMES)[number], string>>,
+  body: () => Promise<void>,
+): Promise<void> {
+  const saved = new Map(PROXY_ENV_NAMES.map((name) => [name, process.env[name]]));
+  for (const name of PROXY_ENV_NAMES) delete process.env[name];
+  Object.assign(process.env, values);
+  try {
+    await body();
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+/* The hint only applies to the runtime's own fetch, so these swap it rather than inject one. */
+async function withPlatformFetch(
+  implementation: typeof fetch,
+  body: (client: SpicyClient) => Promise<void>,
+): Promise<void> {
+  const original = globalThis.fetch;
+  globalThis.fetch = implementation;
+  try {
+    await body(
+      new SpicyClient({
+        apiKey: "sk_test_secret",
+        apiBaseUrl: "http://127.0.0.1:4010/api/v1",
+        serviceBaseUrl: "http://127.0.0.1:4010",
+        maxRetries: 0,
+      }),
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+function edgeBlock(): Response {
+  return new Response(CLOUDFLARE_BLOCK_PAGE, {
+    status: 403,
+    headers: { "content-type": "text/html" },
+  });
+}
+
+void test("an edge 403 names a proxy variable that Node.js fetch ignored", async () => {
+  await withProxyEnv({ HTTPS_PROXY: "http://127.0.0.1:7890" }, async () => {
+    await withPlatformFetch(scriptedFetch([edgeBlock()]).fetch, async (client) => {
+      await assert.rejects(client.getBalance(), (error: unknown) => {
+        assert.ok(error instanceof SpicyApiError);
+        // The refusal still leads; the proxy explains the route, it is not the headline.
+        assert.match(error.message, /^Refused before reaching SpicyAPI \(HTTP 403\)\./);
+        assert.match(
+          error.message,
+          /HTTPS_PROXY is set, but this request did not use it: Node\.js fetch ignores proxy variables unless NODE_USE_ENV_PROXY=1 is also set \(Node\.js 22\.21\+ or 24\+\)\.$/,
+        );
+        return true;
+      });
+    });
+  });
+});
+
+void test("the lowercase proxy variable is the one named, as Node.js reads it first", async () => {
+  await withProxyEnv(
+    { https_proxy: "http://127.0.0.1:7890", HTTPS_PROXY: "http://127.0.0.1:7891" },
+    async () => {
+      await withPlatformFetch(scriptedFetch([edgeBlock()]).fetch, async (client) => {
+        await assert.rejects(client.getBalance(), /https_proxy is set, but this request/);
+      });
+    },
+  );
+});
+
+void test("a network failure through an ignored proxy says so", async () => {
+  const refused: typeof fetch = () => Promise.reject(new TypeError("fetch failed"));
+  await withProxyEnv({ HTTP_PROXY: "http://proxy.internal:3128" }, async () => {
+    await withPlatformFetch(refused, async (client) => {
+      await assert.rejects(client.getBalance(), (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, "SpicyTransportError");
+        assert.match(error.message, /^network request failed\. HTTP_PROXY is set, but/);
+        return true;
+      });
+    });
+  });
+});
+
+/* Counter-examples: each is a situation where the sentence above would send the reader to fix
+   something that is not broken. */
+
+void test("no proxy hint once Node.js is told to use the proxy", async () => {
+  for (const enabled of [
+    { NODE_USE_ENV_PROXY: "1" },
+    { NODE_OPTIONS: "--max-old-space-size=512 --use-env-proxy" },
+  ]) {
+    await withProxyEnv({ HTTPS_PROXY: "http://127.0.0.1:7890", ...enabled }, async () => {
+      await withPlatformFetch(scriptedFetch([edgeBlock()]).fetch, async (client) => {
+        await assert.rejects(client.getBalance(), (error: unknown) => {
+          assert.ok(error instanceof SpicyApiError);
+          assert.doesNotMatch(error.message, /NODE_USE_ENV_PROXY/);
+          assert.match(error.message, /Attention Required! \| Cloudflare"\.$/);
+          return true;
+        });
+      });
+    });
+  }
+});
+
+void test("no proxy hint for a caller-supplied fetch, which may route through a proxy itself", async () => {
+  await withProxyEnv({ HTTPS_PROXY: "http://127.0.0.1:7890" }, async () => {
+    await assert.rejects(clientWith(scriptedFetch([edgeBlock()]).fetch).getBalance(), (error: unknown) => {
+      assert.ok(error instanceof SpicyApiError);
+      assert.doesNotMatch(error.message, /NODE_USE_ENV_PROXY/);
+      return true;
+    });
+  });
+});
+
+void test("no proxy hint for a proxy Node.js could not use, because the switch would stop it starting", async () => {
+  for (const value of ["socks5://127.0.0.1:7890", "127.0.0.1:7890"]) {
+    await withProxyEnv({ HTTPS_PROXY: value }, async () => {
+      await withPlatformFetch(scriptedFetch([edgeBlock()]).fetch, async (client) => {
+        await assert.rejects(client.getBalance(), (error: unknown) => {
+          assert.ok(error instanceof SpicyApiError);
+          assert.doesNotMatch(error.message, /NODE_USE_ENV_PROXY/);
+          return true;
+        });
+      });
+    });
+  }
+});
+
+void test("no proxy hint when no proxy is configured, or only as an empty string", async () => {
+  for (const values of [{}, { HTTPS_PROXY: "", http_proxy: "" }]) {
+    await withProxyEnv(values, async () => {
+      await withPlatformFetch(scriptedFetch([edgeBlock()]).fetch, async (client) => {
+        await assert.rejects(client.getBalance(), (error: unknown) => {
+          assert.ok(error instanceof SpicyApiError);
+          assert.match(error.message, /Attention Required! \| Cloudflare"\.$/);
+          return true;
+        });
+      });
+    });
+  }
+});

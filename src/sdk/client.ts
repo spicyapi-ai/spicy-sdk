@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { SDK_VERSION } from "../generated/package-version.js";
 import { decodeBase64Media } from "./base64.js";
+import { unusedProxyHint } from "./env-proxy.js";
 import { MAX_API_RESPONSE_BYTES, describeForeignBody, readResponseText } from "./response-body.js";
 export { MAX_API_RESPONSE_BYTES } from "./response-body.js";
 
@@ -296,6 +297,8 @@ export class SpicyClient {
   private readonly retryBaseDelayMs: number;
   private readonly maxRetryDelayMs: number;
   private readonly transport: typeof fetch;
+  /** Whether requests go through the runtime's own fetch, the one that may ignore a proxy. */
+  private readonly platformFetch: boolean;
   private readonly now: () => number;
   private readonly random: () => number;
   private readonly sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
@@ -319,6 +322,7 @@ export class SpicyClient {
     this.retryBaseDelayMs = options.retryBaseDelayMs ?? 250;
     this.maxRetryDelayMs = options.maxRetryDelayMs ?? 30_000;
     this.transport = options.fetch ?? globalThis.fetch;
+    this.platformFetch = this.transport === globalThis.fetch;
     this.now = options.now ?? Date.now;
     this.random = options.random ?? Math.random;
     this.sleep = options.sleep ?? defaultSleep;
@@ -696,10 +700,10 @@ export class SpicyClient {
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw notFromTheApi("API response was not valid JSON", response, text);
+      throw notFromTheApi("API response was not valid JSON", response, text, this.proxyHint());
     }
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw notFromTheApi("API response was not a JSON object", response, text);
+      throw notFromTheApi("API response was not a JSON object", response, text, this.proxyHint());
     }
 
     const envelope = parsed as Partial<Envelope<T>>;
@@ -731,7 +735,12 @@ export class SpicyClient {
        sits after the observability hook so that a request stopped at the edge is still counted:
        the status is exactly what would let a caller notice the pattern on their own. */
     if (code === undefined && typeof envelope.msg !== "string") {
-      throw notFromTheApi("API response was not a SpicyAPI envelope", response, text);
+      throw notFromTheApi(
+        "API response was not a SpicyAPI envelope",
+        response,
+        text,
+        this.proxyHint(),
+      );
     }
     if (!response.ok || code !== 200) {
       const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"), this.now());
@@ -786,7 +795,7 @@ export class SpicyClient {
         await this.sleep(this.retryDelay(attempt), signal);
       }
     }
-    throw new SpicyTransportError("network request failed", {
+    throw new SpicyTransportError(this.networkFailureMessage(), {
       cause: lastError instanceof Error ? lastError : undefined,
     });
   }
@@ -819,13 +828,26 @@ export class SpicyClient {
       }
       if (controller.signal.reason instanceof SpicyTimeoutError) throw controller.signal.reason;
       if (error instanceof SpicyTransportError) throw error;
-      throw new SpicyTransportError("network request failed", {
+      throw new SpicyTransportError(this.networkFailureMessage(), {
         cause: error instanceof Error ? error : undefined,
       });
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
     }
+  }
+
+  /**
+   * Only the runtime's own fetch can be ignoring a proxy. A caller that passed its own fetch may
+   * route through one already, and would be told to fix something that is not broken.
+   */
+  private proxyHint(): string | undefined {
+    return this.platformFetch ? unusedProxyHint() : undefined;
+  }
+
+  private networkFailureMessage(): string {
+    const hint = this.proxyHint();
+    return hint === undefined ? "network request failed" : `network request failed. ${hint}`;
   }
 
   private retryDelay(attempt: number, retryAfter?: number): number {
@@ -848,7 +870,12 @@ const RETAINED_BODY_LIMIT = 512;
  * never received the request. What they actually need to know first is that the service is not
  * offered everywhere; the evidence for that claim comes after it, not before.
  */
-function notFromTheApi(reason: string, response: Response, text: string): SpicyApiError {
+function notFromTheApi(
+  reason: string,
+  response: Response,
+  text: string,
+  proxyHint?: string,
+): SpicyApiError {
   const described = describeForeignBody(text);
   /* The stop goes outside the quote unless the quoted text brought its own. */
   const quoted = `${described}${/[.!?]"?$/.test(described) ? "" : "."}`;
@@ -858,6 +885,8 @@ function notFromTheApi(reason: string, response: Response, text: string): SpicyA
           "Refused before reaching SpicyAPI (HTTP 403). The service is not offered in every" +
             " region: https://spicyapi.ai/legal/terms.",
           `A proxy, gateway or CDN edge answered instead - ${quoted}`,
+          /* Last, because it is a reason the request took the route it did, not the refusal. */
+          ...(proxyHint === undefined ? [] : [proxyHint]),
         ]
       : [
           `${reason} (HTTP ${response.status}): ${quoted}`,

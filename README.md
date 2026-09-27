@@ -613,6 +613,11 @@ the [official JavaScript client](https://github.com/openai/openai-node).
   fresh `url`.
 - **`API response exceeded 4194304 bytes`** — narrow `listModels` with `modality` or `task` when you
   include schemas, or use `getModel`.
+- **`network request failed` while `curl` works** — check whether your shell sets `HTTPS_PROXY`.
+  Node.js's built-in `fetch` ignores proxy variables unless the process starts with
+  `NODE_USE_ENV_PROXY=1` (Node.js 22.21+ or 24+); the error then names the variable it did not use.
+  Start `node` with that variable, or pass your own proxy-aware implementation as the `fetch`
+  option. The CLI and the MCP server switch it on for you.
 - **Can I cancel a task?** No. An accepted task runs to the end; aborting only stops your side.
 
 ## More

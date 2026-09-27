@@ -1,5 +1,24 @@
 # @spicyapi/sdk
 
+## 0.7.6
+
+### Patch Changes
+
+- Say so when a request skipped the proxy the shell set up. Node.js's built-in `fetch` ignores
+  `HTTPS_PROXY` and `HTTP_PROXY` unless the process started with `NODE_USE_ENV_PROXY=1`, while curl,
+  git and npm in the same terminal honor them. The request then goes out directly, and the failure
+  points anywhere but the proxy. When a request made through the runtime's own `fetch` cannot
+  connect, or is answered by something other than the API, and an `http://` or `https://` proxy
+  variable is set without that switch, the error now ends with:
+
+  ```text
+  HTTPS_PROXY is set, but this request did not use it: Node.js fetch ignores proxy variables unless NODE_USE_ENV_PROXY=1 is also set (Node.js 22.21+ or 24+).
+  ```
+
+  Nothing is added for a caller-supplied `fetch`, which may route through a proxy already; for a
+  `socks5://` or bare `host:port` value, which Node.js refuses to start with once the switch is on;
+  or when the switch is already on.
+
 ## 0.7.5
 
 ### Patch Changes
