@@ -6,11 +6,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Spicy-API/spicy-sdk.git"
+    "url": "git+https://github.com/spicyapi-ai/spicy-sdk.git"
   },
   "homepage": "https://spicyapi.ai",
   "bugs": {
-    "url": "https://github.com/Spicy-API/spicy-sdk/issues"
+    "url": "https://github.com/spicyapi-ai/spicy-sdk/issues"
   },
   "publishConfig": {
     "access": "public"
