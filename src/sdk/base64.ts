@@ -1,15 +1,29 @@
 import type { UploadContentType } from "./types.js";
 
-const supported = new Set<UploadContentType>([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "video/mp4",
-  "video/webm",
-  "audio/mpeg",
-  "audio/wav",
-]);
+/* A record keyed by every upload type rather than a set, so that a type the contract adds and this
+   table lacks fails to compile instead of being refused at run time. */
+const supported: Record<UploadContentType, true> = {
+  "image/jpeg": true,
+  "image/png": true,
+  "image/webp": true,
+  "image/gif": true,
+  "video/mp4": true,
+  "video/webm": true,
+  "audio/mpeg": true,
+  "audio/wav": true,
+  "application/pdf": true,
+  "application/msword": true,
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+  "application/vnd.ms-excel": true,
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
+  "application/vnd.ms-powerpoint": true,
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": true,
+  "application/vnd.apple.keynote": true,
+  "application/vnd.apple.pages": true,
+  "application/vnd.apple.numbers": true,
+  "text/plain": true,
+  "text/markdown": true,
+};
 
 // Large assets go through the direct-upload pipeline; the task JSON never carries a whole Base64
 // payload.
@@ -26,12 +40,13 @@ export function decodeBase64Media(value: string, contentType?: UploadContentType
     contentType = declared;
     encoded = value.slice(separator + 1);
   }
-  if (!contentType || !supported.has(contentType))
+  if (!contentType || !Object.hasOwn(supported, contentType))
     throw new TypeError("a supported contentType is required for raw Base64");
-  // 90 MiB for audio and video rather than 100: since 2026-09-12 reference assets no longer go
-  // straight from the browser to object storage but through a Cloudflare Worker, whose request body
-  // limit is 100 MB, and the server's MaxReferenceMediaBytes came down to 90 MiB to match. Checking
-  // here first saves a long upload the server is certain to reject.
+  // 90 MiB for audio, video and documents rather than 100: since 2026-09-12 reference assets no
+  // longer go straight from the browser to object storage but through a Cloudflare Worker, whose
+  // request body limit is 100 MB, and the server's MaxReferenceMediaBytes came down to 90 MiB to
+  // match. Documents share that limit. Checking here first saves a long upload the server is
+  // certain to reject.
   const maximum = contentType.startsWith("image/") ? 10 * 1024 * 1024 : 90 * 1024 * 1024;
   if (encoded.length > Math.ceil(maximum / 3) * 4)
     throw new TypeError("Base64 media exceeds the upload size limit");

@@ -97,7 +97,7 @@ export function isTerminal(task: { state?: string }): boolean {
   return task.state !== undefined && TERMINAL_STATES.has(task.state);
 }
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
-const CONTENT_TYPES_BY_EXTENSION: Record<string, UploadContentType> = {
+const CONTENT_TYPES_BY_EXTENSION = {
   ".gif": "image/gif",
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
@@ -107,7 +107,31 @@ const CONTENT_TYPES_BY_EXTENSION: Record<string, UploadContentType> = {
   ".webm": "video/webm",
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
-};
+  // Reference documents, for fields such as `reference_file_url`.
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".key": "application/vnd.apple.keynote",
+  ".pages": "application/vnd.apple.pages",
+  ".numbers": "application/vnd.apple.numbers",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+} as const satisfies Record<string, UploadContentType>;
+
+/* Fails to compile when the contract accepts an upload type that no extension maps to. The upload
+   types come from the generated contract while this table is written by hand, and the contract
+   once gained twelve document types that the table never heard of: `uploadFile("brief.pdf")` then
+   refused a file the server would have taken. Regenerating the types now turns that gap red. */
+type UnmappedUploadType = Exclude<
+  UploadContentType,
+  (typeof CONTENT_TYPES_BY_EXTENSION)[keyof typeof CONTENT_TYPES_BY_EXTENSION]
+>;
+const everyUploadTypeHasAnExtension: [UnmappedUploadType] extends [never] ? true : never = true;
+void everyUploadTypeHasAnExtension;
 
 function isLoopback(hostname: string): boolean {
   const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
@@ -278,7 +302,9 @@ const SUPPORTED_UPLOAD_EXTENSIONS = Object.keys(CONTENT_TYPES_BY_EXTENSION)
   .join(", ");
 
 function inferContentType(filePath: string): UploadContentType {
-  const contentType = CONTENT_TYPES_BY_EXTENSION[extname(filePath).toLowerCase()];
+  const contentType = (CONTENT_TYPES_BY_EXTENSION as Record<string, UploadContentType | undefined>)[
+    extname(filePath).toLowerCase()
+  ];
   if (!contentType) {
     throw new TypeError(
       `contentType is required unless the file extension is one of: ${SUPPORTED_UPLOAD_EXTENSIONS}`,

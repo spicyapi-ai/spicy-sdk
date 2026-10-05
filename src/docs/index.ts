@@ -17,20 +17,22 @@ const DOCS_BASE_URL = "https://docs.spicyapi.ai/docs";
    keywords is not a site field: it adds terms absent from the summary that people nonetheless
    search for - including retrieval terms lost when a summary was rewritten (billing's refund and
    settlement, for instance) - so that the same question does not stop matching after an edit.
-   Five pages (overview, account-setup, glossary, faq, guide-image-to-video) were not yet live when
-   this index was written; their titles follow the site navigation, and their summaries should be
-   checked against the frontmatter once the pages land. */
+   The one deliberate difference: the four language SDK summaries leave out the package or module
+   identifier the site puts in brackets, because those identifiers move with the repositories and a
+   stale one here would point somebody at the wrong install command. */
 const definitions: Array<Omit<DocumentationEntry, "url">> = [
   {
     slug: "overview",
-    title: "Overview",
-    summary: "What SpicyAPI is and how models, tasks, pricing and results fit together.",
+    title: "How SpicyAPI works",
+    summary:
+      "What SpicyAPI is, what you can make with it, the four ways to use it with or without code, and the few ideas every other page builds on.",
     keywords: ["overview", "what is spicyapi", "concepts", "how it works"],
   },
   {
     slug: "account-setup",
-    title: "Account setup",
-    summary: "Create an account, add funds and create an API key before your first request.",
+    title: "Set up your account",
+    summary:
+      "Go from no account to a working API key in about fifteen minutes. Sign up, verify your email, add funds, create a key and make a free test call, with every screen explained.",
     keywords: ["account", "sign up", "register", "waitlist", "top up", "first key"],
   },
   {
@@ -64,7 +66,7 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
     slug: "sdk",
     title: "TypeScript SDK",
     summary:
-      "A step-by-step guide to @spicyapi/sdk — install it, get your first result, and look up every method, option and error in plain language.",
+      "A step-by-step guide to the TypeScript SDK @spicyapi/sdk — install it, get your first result, and look up every method, option and error in plain language. Python, Go, PHP and Java SDKs are documented on their own pages.",
     keywords: ["sdk", "typescript", "javascript", "node", "npm", "client library"],
   },
   {
@@ -98,14 +100,15 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
   {
     slug: "authentication",
     title: "Authentication",
-    summary: "Key format, per-key restrictions, and what to do the moment a key leaks.",
+    summary:
+      "Key format, per-key restrictions, which tasks a key can see, and what to do the moment a key leaks.",
     keywords: ["api key", "bearer", "security", "rotation", "incident"],
   },
   {
     slug: "models",
     title: "Model catalog and schemas",
     summary:
-      "Use the authenticated live catalog to select callable models and build requests from their current JSON Schema.",
+      "Use the authenticated live catalog to select callable models, read their prices, and build requests from their current JSON Schema.",
     keywords: [
       "catalog",
       "schema",
@@ -138,6 +141,8 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
       "size limit",
       "public https media",
       "signed result url",
+      "document",
+      "pdf",
     ],
   },
   {
@@ -156,7 +161,8 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
   {
     slug: "quotes-and-compatibility",
     title: "Quotes and protocol compatibility",
-    summary: "Confirm an exact quote before using task or text compatibility APIs.",
+    summary:
+      "Get the exact price of a request before paying, submit it at that price, recover from a lost response, and know how the text and video compatibility APIs are priced.",
     keywords: [
       "quote",
       "quoteTask",
@@ -175,20 +181,57 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
     title: "Text and streaming",
     summary:
       "Call text models in the official OpenAI, Anthropic or Google Gemini format, and handle conversations, tools, streams and costs correctly.",
-    keywords: ["text", "chat", "llm", "streaming", "sse", "tokens", "messages"],
+    keywords: [
+      "text",
+      "chat",
+      "llm",
+      "streaming",
+      "sse",
+      "tokens",
+      "messages",
+      "vision",
+      "image input",
+      "video input",
+      "audio input",
+      "multimodal",
+      "keep-alive",
+    ],
+  },
+  {
+    slug: "chat-recipes",
+    title: "Chat recipes",
+    summary:
+      "Complete, runnable programs for multi-turn conversations, character role-play, streaming into your own interface and tool calling, in Python, Node.js and curl.",
+    keywords: [
+      "chat",
+      "role-play",
+      "roleplay",
+      "character",
+      "multi-turn",
+      "conversation history",
+      "tool calling",
+      "examples",
+    ],
+  },
+  {
+    slug: "migrate-from-openai",
+    title: "Migrate from OpenAI or OpenRouter",
+    summary:
+      "Point existing OpenAI-library code at SpicyAPI. What changes (base URL, key, model ID), which request fields behave differently, and what to remove when you come from OpenRouter.",
+    keywords: ["openai", "openrouter", "migrate", "migration", "switch", "base url", "drop-in"],
   },
   {
     slug: "agents",
-    title: "SDK, CLI, MCP and agents",
+    title: "Agents and automation",
     summary:
-      "The four official npm packages, and a production runbook for AI agents, backend workers and repeatable media pipelines.",
-    keywords: ["agent", "mcp", "tool", "packages", "runbook"],
+      "Which official tool to use, and a production runbook for AI agents, backend workers and repeatable media pipelines.",
+    keywords: ["agent", "mcp", "sdk", "cli", "tool", "packages", "runbook"],
   },
   {
     slug: "guide-image-to-video",
-    title: "Turn an image into a video",
+    title: "Tutorial: turn a picture into a video",
     summary:
-      "Step by step: upload a still image, choose an image-to-video model from the live catalog, confirm the quote and collect the finished clip.",
+      "Start from one picture on your computer and finish with a downloaded video file. Every step shows the CLI, the TypeScript SDK and plain HTTP.",
     keywords: ["image to video", "image-to-video", "animate a photo", "walkthrough"],
   },
   {
@@ -210,7 +253,7 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
     slug: "subject-swap",
     title: "Subject swap",
     summary:
-      "Replace a face, a head or a whole figure. Single-call models do it in one request; two-call models analyse the clip first so the caller picks which person changes.",
+      "One toolkit, two shapes. Single-call models replace a face or a head in one request; two-call models analyse a clip first so you can choose which person changes.",
     keywords: [
       "face swap",
       "head swap",
@@ -226,14 +269,14 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
     slug: "production-integration",
     title: "Production integration",
     summary:
-      "Build a recoverable integration with explicit costs, durable task tracking and useful diagnostics.",
+      "A launch checklist for a recoverable integration — the right model, protected keys and balance, confirmed costs, durable task tracking, reliable callbacks and the tests to run before going live.",
     keywords: ["production", "checklist", "go live", "monitoring", "reconciliation"],
   },
   {
     slug: "billing",
     title: "Billing",
     summary:
-      "Priced in cash, held then settled, always released on failure — and the three spend caps.",
+      "Priced in US dollars. Funds are held when a task is accepted, settled on success and returned in full on failure — plus adding funds, spend caps, balance history and invoices.",
     keywords: [
       "cost",
       "credit",
@@ -248,15 +291,16 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
   },
   {
     slug: "console-workspaces",
-    title: "Console and workspaces",
-    summary: "Manage team API tasks, usage and budgets while keeping personal payments separate.",
+    title: "Console and teams",
+    summary:
+      "What every page of the SpicyAPI console does and when to use it, and how teams share API keys and spend limits while the team owner pays.",
     keywords: ["console", "workspace", "team", "members", "budget"],
   },
   {
     slug: "retention",
     title: "Retention and destruction",
     summary:
-      "What the platform caps are, how far down you can dial them, how to destroy a task's content, and what we cannot promise.",
+      "What the platform caps are, how far down you can dial them, what shortening a setting does to content you already have, how to destroy a task's content, and what we cannot promise.",
     keywords: [
       "privacy",
       "delete",
@@ -270,13 +314,15 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
   {
     slug: "api-reference",
     title: "OpenAPI and endpoint index",
-    summary: "Downloadable OpenAPI 3.1 contract, every public endpoint, and the production origin.",
+    summary:
+      "Downloadable OpenAPI 3.1 contract, every public endpoint with the guide that explains it, the shared request headers, and the production origin.",
     keywords: ["openapi", "endpoint", "reference", "api reference", "envelope"],
   },
   {
     slug: "errors",
     title: "Errors",
-    summary: "Every business code, its HTTP status, and which retries are worth making.",
+    summary:
+      "Every business code, its HTTP status, what to do about it, and which retries are worth making.",
     keywords: [
       "code",
       "request_id",
@@ -293,7 +339,7 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
     slug: "limits",
     title: "Rate limits",
     summary:
-      "How the bucket works, what draws from it, and why concurrency is a separate question.",
+      "How the read and write request buckets work, what draws from each, the other limits you can run into, and why concurrency is a separate question.",
     keywords: ["rate", "quota", "retry-after", "throttling", "backoff", "concurrency"],
   },
   {
@@ -314,26 +360,28 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
     slug: "troubleshooting",
     title: "Troubleshooting and recovery",
     summary:
-      "Recover ambiguous submissions and diagnose model availability, quote conflicts, uploads and interrupted streams.",
+      "Find your symptom, see why it happens and what to do — payments, 401 and 403, balance and limits, unavailable models, failed or stuck tasks, uploads, callbacks and streams.",
     keywords: ["troubleshooting", "debug", "recover", "stuck", "pending"],
   },
   {
     slug: "faq",
     title: "FAQ",
-    summary: "Answers to the questions developers ask most often before and during an integration.",
+    summary:
+      "Short answers to the questions people ask most about SpicyAPI, from free tiers and failed-task charges to cancelling tasks, keeping results and fixing common errors.",
     keywords: ["faq", "frequently asked questions"],
   },
   {
     slug: "glossary",
     title: "Glossary",
-    summary: "Definitions of the terms used throughout the SpicyAPI documentation.",
+    summary:
+      "Every term these docs use, from API key to webhook, explained in plain words with what it means in SpicyAPI and where to read more.",
     keywords: ["glossary", "terminology", "definitions"],
   },
   {
     slug: "policy",
     title: "Content and usage responsibility",
     summary:
-      "Choose a model for the capability you need. SpicyAPI does not require a content-mode request flag and does not perform per-request content review.",
+      "What SpicyAPI checks and what it doesn't, what you are responsible for, which uses are never allowed, where the service is available, and how to report abuse.",
     keywords: [
       "model capabilities",
       "content review",

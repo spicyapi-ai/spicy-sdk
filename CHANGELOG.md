@@ -1,5 +1,33 @@
 # @spicyapi/sdk
 
+## 0.8.0
+
+### Minor Changes
+
+- Upload reference documents. The platform now accepts PDF, Word, Excel, PowerPoint, Keynote, Pages,
+  Numbers, plain text and Markdown files for models whose schema declares a document field such as
+  `reference_file_url`. `uploadFile` infers the type from `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`,
+  `.ppt`, `.pptx`, `.key`, `.pages`, `.numbers`, `.txt` and `.md`, and `uploadBase64` accepts the
+  same types; documents share the 90 MiB limit of audio and video. Until now neither helper knew
+  these types: `uploadFile("brief.pdf")` threw before anything was sent. Both tables are now checked
+  at compile time against the contract's upload types, so the next type the contract adds cannot be
+  left out silently.
+- Refresh the bundled OpenAPI contract and its generated types to the live API. New in the types:
+  `output.transcript` with word timings, language and channels on speech-to-text results (exported
+  as `TaskTranscript`); `layer` with `zIndex` and `boundingBox` on layer decomposition assets
+  (`TaskOutputAsset`); the `per_1k_characters` price unit used by speech models; the `studio-tools`
+  toolkit; `requestId` on task records; business code `40310` (the account's email address is not
+  verified); the `X-Spicy-Task-Id` header, `top_k`, `seed`, `stop` and `parallel_tool_calls` on the
+  compatible text endpoints; and the `modality` filter and chat metadata on `GET /v1/models`.
+- Document chat models that read images, video and audio. The README shows how to upload a file with
+  this SDK and send its `spicy://` URI as an `image_url`, `video_url` or `audio_url` part (or inline
+  audio as `input_audio`) through the official `openai` client, how to read the `X-Spicy-Task-Id`
+  header, and what the `: keep-alive` lines, `unsupported_parameter` and `content_rejected` mean. A
+  test confirms the official client forwards the parts its own types do not declare unchanged.
+- Bring the documentation index in line with the site: add the Chat recipes and Migrate from OpenAI
+  or OpenRouter pages, so `searchDocumentation("openrouter")` and `"role-play"` find them, and
+  update titles and summaries that had drifted.
+
 ## 0.7.6
 
 ### Patch Changes

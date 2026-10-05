@@ -670,12 +670,58 @@ void test("when the type cannot be inferred, the error lists every extension in 
       assert.ok(error instanceof TypeError);
       // The audio and video extensions have to appear: the message used to list images only, and
       // readers concluded the platform takes no video.
-      for (const extension of ["jpg", "png", "gif", "mp4", "webm", "mp3", "wav"]) {
+      const expected = ["jpg", "png", "gif", "mp4", "webm", "mp3", "wav", "pdf", "docx", "md"];
+      for (const extension of expected) {
         assert.match(error.message, new RegExp(`\\b${extension}\\b`), extension);
       }
       return true;
     });
     assert.equal(mock.calls.length, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+void test("a reference document uploads with its type inferred from the extension", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "spicy-sdk-document-"));
+  try {
+    const cases = [
+      ["brief.pdf", "application/pdf"],
+      ["Deck.PPTX", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+      ["notes.md", "text/markdown"],
+    ] as const;
+    for (const [name, contentType] of cases) {
+      const filePath = join(directory, name);
+      await writeFile(filePath, "%PDF-1.7");
+      const mock = scriptedFetch([
+        (call) => {
+          assert.deepEqual(JSON.parse(call.init?.body as string), { contentType, bytes: 8 });
+          return envelope({
+            fileId: "fil_doc",
+            key: "spicy://f/fil_doc",
+            uploadUrl: "https://storage.example/upload/fil_doc",
+            method: "PUT",
+            headers: { "Content-Type": contentType },
+            expiresAt: "2026-10-05T00:10:00Z",
+            maxBytes: 94_371_840,
+          });
+        },
+        new Response(null, { status: 204 }),
+        envelope({
+          fileId: "fil_doc",
+          status: "ready",
+          bytes: 8,
+          contentType,
+          sha256: "a".repeat(64),
+          uri: "spicy://f/fil_doc",
+          expiresAt: "2026-10-06T00:00:00Z",
+        }),
+      ]);
+      const uploaded = await clientWith(mock.fetch).uploadFile(filePath);
+      assert.equal(uploaded.contentType, contentType, name);
+      assert.equal(uploaded.uri, "spicy://f/fil_doc");
+      assert.equal(mock.calls.length, 3);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

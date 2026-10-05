@@ -100,3 +100,54 @@ void test("compatibility calls through the official client do not auto-retry a r
   );
   assert.equal(requests, 1);
 });
+
+void test("the official client forwards video and audio parts unchanged, skips keep-alive comments and exposes the task header", async () => {
+  // `video_url` and `audio_url` are SpicyAPI parts that the official client's types do not
+  // declare; they still have to reach the API exactly as written.
+  const content = [
+    { type: "text", text: "Describe the clip and the voice note." },
+    { type: "image_url", image_url: { url: "spicy://f/fil_image" } },
+    { type: "video_url", video_url: { url: "spicy://f/fil_video" } },
+    { type: "audio_url", audio_url: { url: "spicy://f/fil_audio" } },
+    { type: "input_audio", input_audio: { data: "UklGRg==", format: "wav" } },
+  ];
+  const client = new OpenAI({
+    apiKey: "test-only",
+    baseURL,
+    maxRetries: 0,
+    fetch: (_url, init) => {
+      const body = JSON.parse(init?.body as string) as {
+        messages: Array<{ content: unknown }>;
+      };
+      assert.deepEqual(body.messages[0]?.content, content);
+      // A long reasoning model may send nothing but SSE comments for a while.
+      const data =
+        ": keep-alive\n\n: keep-alive\n\n" +
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "A cat." } }] })}\n\n` +
+        ": keep-alive\n\n" +
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n` +
+        "data: [DONE]\n\n";
+      return Promise.resolve(
+        new Response(data, {
+          headers: { "Content-Type": "text/event-stream", "X-Spicy-Task-Id": "job_example" },
+        }),
+      );
+    },
+  });
+  const { data: stream, response } = await client.chat.completions
+    .create({
+      model: "example/1/chat",
+      messages: [{ role: "user", content: content as OpenAI.Chat.ChatCompletionContentPart[] }],
+      stream: true,
+    })
+    .withResponse();
+  assert.equal(response.headers.get("X-Spicy-Task-Id"), "job_example");
+  let text = "";
+  let chunks = 0;
+  for await (const chunk of stream) {
+    chunks += 1;
+    text += chunk.choices[0]?.delta.content ?? "";
+  }
+  assert.equal(text, "A cat.");
+  assert.equal(chunks, 2);
+});

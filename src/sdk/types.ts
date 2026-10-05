@@ -12,6 +12,10 @@ export type TaskList = components["schemas"]["APIKeyTaskListResponse"];
 export type TaskListItem = components["schemas"]["APIKeyTaskItem"];
 export type TaskRecord = components["schemas"]["TaskRecord"];
 export type TaskState = TaskRecord["state"];
+/** One generated file in `output.assets`; on layer decomposition results it also carries `layer`. */
+export type TaskOutputAsset = components["schemas"]["TaskOutputAsset"];
+/** Timing and language details that speech-to-text models add next to the plain `output.text`. */
+export type TaskTranscript = components["schemas"]["TaskTranscript"];
 export type CreateTaskResult = components["schemas"]["CreateTaskResponse"];
 export type RetryTaskResult = components["schemas"]["RetryTaskResponse"];
 export type PurgeTaskResult = components["schemas"]["TaskPurgeResponse"];

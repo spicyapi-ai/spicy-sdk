@@ -96,10 +96,22 @@ export interface paths {
          *     JSON chunk; the stream ends with `data: [DONE]`.
          *
          *     The hold is settled when the stream completes. If generation fails
-         *     before the first event, the response is a normal JSON error and the hold is
-         *     released. If it fails mid-stream the connection is terminated with an
-         *     `error` event and the hold is still released — a truncated answer is never
-         *     charged as a completed one.
+         *     within the first few seconds, before anything has been sent, the response
+         *     is a normal JSON error and the hold is released. While a long reasoning
+         *     model has not produced anything yet, and whenever the stream goes quiet,
+         *     the connection carries SSE comment lines (`: keep-alive`) so the network
+         *     edge does not close it as idle; clients must ignore them, as the SSE
+         *     format requires. A failure after that point, or mid-stream, ends the
+         *     stream with an `error` event and the hold is still released — a truncated
+         *     answer is never charged as a completed one. The reverse also holds: when
+         *     the model has already finished the answer (every choice has a
+         *     `finish_reason` and the final usage has arrived) and only then reports an
+         *     error or drops the connection, the answer is complete, the stream ends
+         *     with `[DONE]` as usual, and the delivered usage is charged.
+         *
+         *     Non-streaming calls to the compatible endpoints get no keep-alive: a
+         *     response that takes longer than about 100 seconds is cut off by the
+         *     network edge and is not charged. Use `stream: true` for long reasoning.
          *
          *     Generation models (image, video, audio) are asynchronous and must use
          *     `createTask` with `recordInfo` polling; calling this endpoint for them
@@ -424,6 +436,12 @@ export interface paths {
          *     model identifier accepted by every `/v1` and `/api/v1` operation;
          *     `owned_by` is the model publisher (for example a research lab).
          *     Pricing is not included; use `/api/v1/models`.
+         *
+         *     Besides the four OpenAI fields, every item carries `modality` and `task`;
+         *     chat models (`task: chat`, the only ones the chat, Responses, Messages and
+         *     Gemini operations accept) also carry `context_length`, `max_output_tokens`
+         *     and `supported_parameters`. OpenAI SDKs ignore the extra fields. Pass
+         *     `modality=text` to list only text models.
          */
         get: operations["listOpenAIModels"];
         put?: never;
@@ -446,18 +464,35 @@ export interface paths {
         /**
          * OpenAI Chat Completions on a SpicyAPI text model
          * @description Accepts an OpenAI Chat Completions request. `messages`, `tools`,
-         *     `tool_choice`, `response_format`, `max_tokens` (or
-         *     `max_completion_tokens`), `temperature` and `top_p` map onto the
-         *     model's public input fields of the same name; `stream`,
+         *     `tool_choice`, `parallel_tool_calls`, `response_format`, `max_tokens`
+         *     (or `max_completion_tokens`), `temperature`, `top_p`, `top_k`, `seed`
+         *     and `stop` map onto the model's public input fields of the same name
+         *     when the model declares them (each model page lists its own set);
+         *     `stream`,
          *     `stream_options`, `user`, `metadata` and `store` are handled by this
          *     layer. Any other parameter is forwarded to the model's input schema
          *     and rejected with `400` when the model does not declare it — a
          *     parameter is never dropped silently.
          *
          *     `stream: true` returns a Server-Sent Events stream of
-         *     `chat.completion.chunk` objects terminated by `data: [DONE]`.
-         *     `stream: false` returns one `chat.completion` object. The same hold,
-         *     settlement and refund rules as `/api/v1/jobs/stream` apply.
+         *     `chat.completion.chunk` objects terminated by `data: [DONE]`. Every
+         *     chunk has a non-empty `choices` array and each choice ends with exactly
+         *     one chunk carrying `finish_reason`. Usage follows OpenAI: a stream
+         *     carries no `usage` unless `stream_options.include_usage` is `true`, in
+         *     which case one extra chunk with `choices: []` and the final `usage`
+         *     comes right before `[DONE]` and every other chunk has `usage: null`.
+         *     `stream: false` returns one `chat.completion` object that always has
+         *     `usage`. The same hold, settlement and refund rules as
+         *     `/api/v1/jobs/stream` apply; the `X-Spicy-Task-Id` response header names
+         *     the task that holds the charge.
+         *
+         *     Errors a client can act on: an unknown `model` returns `404` with
+         *     `code: model_not_found`, the ID shape (`publisher/model/chat`) and the
+         *     closest callable chat model; a model that is not a chat model returns
+         *     `400` with `param: model`; a field or message part the model does not
+         *     accept (for example an `image_url` part on a text-only model) returns
+         *     `400` with `code: unsupported_parameter` and `param` pointing at it; a
+         *     content-policy refusal returns `400` with `code: content_rejected`.
          */
         post: operations["createChatCompletion"];
         delete?: never;
@@ -510,8 +545,12 @@ export interface paths {
          * Anthropic Messages API on a SpicyAPI text model
          * @description Accepts an Anthropic Messages request (`model`, `system`, `messages`
          *     with text / image / tool_use / tool_result blocks, `max_tokens`,
-         *     `temperature`, `top_p`, `stop_sequences`, `tools`, `tool_choice`,
-         *     `stream`) and translates it to a chat completion internally.
+         *     `temperature`, `top_p`, `top_k`, `stop_sequences`, `tools`,
+         *     `tool_choice`, `stream`) and translates it to a chat completion
+         *     internally. `stop_sequences` becomes the model's `stop` field, and
+         *     `tool_choice.disable_parallel_tool_use: true` becomes
+         *     `parallel_tool_calls: false`; a model that does not declare the
+         *     target field rejects the request with `400` instead of ignoring it.
          *     Non-streaming calls return an Anthropic `message` object. Streaming
          *     calls emit `message_start`, `content_block_start`,
          *     `content_block_delta`, `content_block_stop`, `message_delta` and
@@ -713,17 +752,17 @@ export interface components {
         };
         ErrorEnvelope: components["schemas"]["EnvelopeBase"] & {
             /**
-             * @description Business code. `40003`: an uploaded file's actual size, media type or signature does not match its upload ticket (file commit). `40004`: the request is valid but no deployment can serve this exact parameter combination; change the named parameter and retry. `503`: a dependency is temporarily unavailable (for example a list or usage query timed out, or inline image storage failed); honour `Retry-After` when present. `50301`: the model has no usable deployment or effective price right now. `50302`: a synchronous generation (streaming) failed upstream and the charge was refunded. Retry with a **new** `Idempotency-Key` — the original key replays the same failure, so a transport-level retry that keeps the key can never succeed. `40301`: this key is not allowed to call this model — check the key's model restrictions in the Console. `40302`: the caller's address is not in this key's IP allow-list. `40303`: the request comes from a region this service is not offered in; the message deliberately does not state how that is determined, and neither does this description.
+             * @description Business code. `40003`: an uploaded file's actual size, media type or signature does not match its upload ticket (file commit). `40004`: the request is valid but no deployment can serve this exact parameter combination; change the named parameter and retry. `503`: a dependency is temporarily unavailable (for example a list or usage query timed out, or inline image storage failed); honour `Retry-After` when present. `50301`: the model has no usable deployment or effective price right now. `50302`: a synchronous generation (streaming) failed upstream and the charge was refunded. Retry with a **new** `Idempotency-Key` — the original key replays the same failure, so a transport-level retry that keeps the key can never succeed. `40301`: this key is not allowed to call this model — check the key's model restrictions in the Console. `40302`: the caller's address is not in this key's IP allow-list. `40303`: the request comes from a region this service is not offered in; the message deliberately does not state how that is determined, and neither does this description. `40310`: the account has not verified its email address yet, so it cannot run models. Open the verification link that was emailed at sign-up, or send a new one from the Console; the key starts working as soon as the address is verified, with no change on your side.
              * @enum {integer}
              */
-            code?: 400 | 40003 | 40004 | 401 | 40201 | 40202 | 403 | 40301 | 40302 | 40303 | 404 | 409 | 40901 | 413 | 429 | 500 | 503 | 50301 | 50302;
+            code?: 400 | 40003 | 40004 | 401 | 40201 | 40202 | 403 | 40301 | 40302 | 40303 | 40310 | 404 | 409 | 40901 | 413 | 429 | 500 | 503 | 50301 | 50302;
             /** @description Human-readable explanation, English unless `Accept-Language` or the account's API error language selects another supported language. Never parse it; branch on `code`. */
             msg?: string;
         };
         CreateTaskRequest: {
             /** @description Exact `model` value from the model catalog. */
             model: string;
-            /** @description Validated against the selected model's inputSchema. Declared image fields accept public HTTPS URLs, committed spicy:// file URIs, or standard Base64 Data URIs (image/jpeg, image/png, image/webp, image/gif). Inline images are limited to 1048576 decoded bytes and 8388608 pixels each, 8192 pixels per side, and 16 images / 16777216 pixels in total. The complete JSON request must fit within 2097152 bytes. Model-specific limits still apply. Bare Base64, SVG and inline audio/video are not accepted; use HTTPS or file uploads instead. Inline images are stored as account-bound uploaded files; returned input contains file URIs, never the original Base64 bytes. Quote validation does not upload or reserve funds. If the model's inputSchema declares `seed` and you omit it, we pick a random seed for this task, so two identical requests do not come back with the same output. The chosen seed is returned in the task's `input`; pass it back to hold the draw steady (a fixed seed keeps runs comparable, it does not guarantee an identical result). On the few models that cannot honour `seed` on every request, we still vary it where it applies but do not echo it. A `seed` you send yourself is always used as given. */
+            /** @description Validated against the selected model's inputSchema. Declared image fields accept public HTTPS URLs, committed spicy:// file URIs, your own persona images as spicy://p/<assetId> (created in the console; usable only with API keys you created in your personal workspace, so team workspace keys, another account's id and an unknown id all get the same rejection, and persona images are refused in video, audio and file fields), or standard Base64 Data URIs (image/jpeg, image/png, image/webp, image/gif). Inline images are limited to 1048576 decoded bytes and 8388608 pixels each, 8192 pixels per side, and 16 images / 16777216 pixels in total. The complete JSON request must fit within 2097152 bytes. Model-specific limits still apply. Bare Base64, SVG and inline audio/video are not accepted; use HTTPS or file uploads instead. Inline images are stored as account-bound uploaded files; returned input contains file URIs, never the original Base64 bytes. Quote validation does not upload or reserve funds. If the model's inputSchema declares `seed` and you omit it, we pick a random seed for this task, so two identical requests do not come back with the same output. The chosen seed is returned in the task's `input`; pass it back to hold the draw steady (a fixed seed keeps runs comparable, it does not guarantee an identical result). On the few models that cannot honour `seed` on every request, we still vary it where it applies but do not echo it. A `seed` you send yourself is always used as given. */
             input: {
                 [key: string]: unknown;
             };
@@ -823,10 +862,47 @@ export interface components {
         };
         /** @description First-party result metadata. Ready assets include directly usable temporary URLs; no download-ticket request is needed. Poll again to refresh an expired URL. Temporary URLs are bearer access grants; never attach your API key when fetching them. */
         TaskOutput: {
+            /** @description Text result (chat */
             text?: string;
+            transcript?: components["schemas"]["TaskTranscript"];
             assets?: components["schemas"]["TaskOutputAsset"][];
         } & {
             [key: string]: unknown;
+        };
+        /** @description Structured transcription result, present only on speech-to-text endpoints that return it. `text` above stays the plain transcript; this object adds timing and language details. Erased together with the rest of the task output on the prompt-retention schedule. */
+        TaskTranscript: {
+            /** @description Full transcript. */
+            text?: string;
+            /** @description Detected language, as reported by the model (for example en). */
+            language?: string;
+            /** @description Detected language code (ISO 639-3, for example eng) when available. */
+            languageCode?: string;
+            /** @description Confidence of the detected language */
+            languageProbability?: number;
+            /** @description Length of the transcribed audio in seconds. */
+            durationSeconds?: number;
+            words?: components["schemas"]["TaskTranscriptWord"][];
+            /** @description Present when multichannel transcription was requested; one entry per audio channel. */
+            channels?: components["schemas"]["TaskTranscriptChannel"][];
+        };
+        TaskTranscriptWord: {
+            text: string;
+            /** @description Start time in seconds from the beginning of the audio. */
+            start: number;
+            /** @description End time in seconds. */
+            end: number;
+            /** @description Segment type (for example word) when the model reports one. */
+            type?: string;
+            /** @description Speaker label; only present when the model performs speaker separation. */
+            speakerId?: string;
+        };
+        TaskTranscriptChannel: {
+            /** @description Zero-based channel index. */
+            index: number;
+            text?: string;
+            language?: string;
+            languageCode?: string;
+            words?: components["schemas"]["TaskTranscriptWord"][];
         };
         TaskOutputAsset: {
             /** @description Compatibility identifier for optional download-url requests. */
@@ -851,6 +927,12 @@ export interface components {
             nsfw?: boolean;
             pending?: boolean;
             unavailable?: boolean;
+            /** @description Present only on layer decomposition results. The first asset is the base image (the source with the separated elements removed, `zIndex` 0); every other asset is one transparent PNG layer. Stack them by ascending `zIndex` to rebuild the picture. `boundingBox` is `[x1, y1, x2, y2]` in base-image pixels and places the layer on the base (scale the layer to that box); it is absent on the base image and on models that do not report positions, in which case the layers can still be used as standalone cut-outs. `name` is the model's label for the layer when it gives one. */
+            layer?: {
+                zIndex: number;
+                name?: string;
+                boundingBox?: number[];
+            };
         } & {
             [key: string]: unknown;
         };
@@ -874,7 +956,7 @@ export interface components {
             /** @description Human-readable failure reason. When the model service reported a specific reason (for example a corrupted reference image or a copyright restriction on generated audio), that reason is returned in English with internal service names, hosts, URLs, request and task IDs, error-code suffixes and account or billing details removed; otherwise a normalized message that follows the same language selection as `msg`. `errorCode` never changes and remains the value to branch on. */
             errorMessage?: string;
             cost: components["schemas"]["USDString"];
-            /** @description When false, `cost` is the held estimate. On success the final charge is capped at that hold; unused funds are released. Failed or expired tasks release the hold in full. */
+            /** @description When false, `cost` is the held estimate. When true, `cost` is the final charge. On success the final charge is capped at that hold; unused funds are released. Failed or expired tasks normally release the hold in full; the one exception is a `content_rejected` task on a model whose page states that such refusals are billed, which is settled at the accepted estimate. */
             settled: boolean;
             /** Format: date-time */
             createdAt: string;
@@ -947,6 +1029,8 @@ export interface components {
         };
         APIKeyTaskItem: {
             taskId: string;
+            /** @description The `X-Request-Id` of the request that created this task. Synchronous text calls (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`, Gemini, `/api/v1/jobs/stream`) can be matched to their task with it, or with the `X-Spicy-Task-Id` response header. Omitted when no request id was recorded. */
+            requestId?: string;
             /** @description Public model identifier. */
             model: string;
             /** @enum {string} */
@@ -1029,7 +1113,7 @@ export interface components {
             /** @description Price tier key. Empty when the model has a single price. When one input field sets the price, it is that field's value as is (for example `720p`). When several fields do, it is `field=value` pairs sorted by field name and joined with `;` (for example `duration=5;resolution=720p`), with values URL-encoded; `~` stands for an optional field that was not sent and has no default. */
             variant: string;
             /** @enum {string} */
-            unit: "per_image" | "per_second" | "per_request" | "per_1k_tokens";
+            unit: "per_image" | "per_second" | "per_request" | "per_1k_tokens" | "per_1k_characters";
             price: components["schemas"]["USDString"];
             regularPrice?: components["schemas"]["USDString"];
             offerLabel?: string;
@@ -1052,7 +1136,7 @@ export interface components {
             provider: string;
             /** @enum {string} */
             modality: "image" | "video" | "audio" | "text";
-            /** @description The internal task classification of this one endpoint. Always exactly one element, and it is not always the suffix of `model`: image editing endpoints are published as `.../edit` but classified as `image-to-image`, because renaming the call did not reclassify the work. Use `model` to call, and `tasks[0]` only to group or filter. Other values match their suffix: `text-to-image`, `text-to-video`, `image-to-video`, `reference-to-video`, `video-edit`, `video-extend`, `video-analyze`, `character-animation`, `speech-to-text`, `chat`. New values appear as models are added, so treat the set as open. */
+            /** @description The internal task classification of this one endpoint. Always exactly one element, and it is not always the suffix of `model`: image editing endpoints are published as `.../edit` but classified as `image-to-image`, because renaming the call did not reclassify the work. Use `model` to call, and `tasks[0]` only to group or filter. Other values match their suffix: `text-to-image`, `text-to-video`, `image-to-video`, `reference-to-video`, `video-edit`, `video-extend`, `video-analyze`, `character-animation`, `talking-avatar`, `lip-sync`, `video-to-audio` (returns the same video with a generated sound track), `frame-interpolation` (returns the same video at twice its frame rate, same length and audio), `layer-decomposition` (returns a base image plus transparent layers, see `TaskOutputAsset.layer`), `speech-to-text`, `chat`. New values appear as models are added, so treat the set as open. */
             tasks: string[];
             async: boolean;
             /** @description Informational model-creator capability metadata only. It does not participate in authorization, availability decisions, or request rejection. */
@@ -1063,10 +1147,10 @@ export interface components {
              */
             policyTier: "unrestricted" | "borderline" | "softened" | "filtered" | "unspecified";
             /**
-             * @description Which toolkit family this model belongs to (subject-swap). Informational classification for catalogue grouping only; it does not participate in routing, pricing or authorization. Absent when the model is not part of a toolkit.
+             * @description Which toolkit family this model belongs to (subject-swap for identity swaps; studio-tools for single-purpose image and video tools such as background removal or upscaling). Informational classification for catalogue grouping only; it does not participate in routing, pricing or authorization. Absent when the model is not part of a toolkit.
              * @enum {string}
              */
-            toolkit?: "subject-swap";
+            toolkit?: "subject-swap" | "studio-tools";
             /** @description Absolute platform execution deadline before timeout/refund; not media output duration. */
             taskTimeoutSeconds: number;
             /** @description Maximum output duration the model schema allows, taken from the `maximum` of its `duration_seconds` property; omitted when that property is absent or has no declared maximum. Distinct from `taskTimeoutSeconds`, which is the platform execution deadline. */
@@ -1148,10 +1232,10 @@ export interface components {
              */
             policyTier?: "unrestricted" | "borderline" | "softened" | "filtered" | "unspecified";
             /**
-             * @description Which toolkit family this model belongs to (subject-swap). Informational classification for catalogue grouping only; it does not participate in routing
+             * @description Which toolkit family this model belongs to (subject-swap for identity swaps; studio-tools for single-purpose image and video tools such as background removal or upscaling). Informational classification for catalogue grouping only; it does not participate in routing
              * @enum {string}
              */
-            toolkit?: "subject-swap";
+            toolkit?: "subject-swap" | "studio-tools";
             async?: boolean;
             /**
              * @description Operator intent. `live` is the only status that can be callable.
@@ -1206,7 +1290,7 @@ export interface components {
         };
         UploadURLRequest: {
             /** @enum {string} */
-            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "video/mp4" | "video/webm" | "audio/mpeg" | "audio/wav";
+            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "video/mp4" | "video/webm" | "audio/mpeg" | "audio/wav" | "application/pdf" | "application/msword" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.ms-excel" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "application/vnd.ms-powerpoint" | "application/vnd.openxmlformats-officedocument.presentationml.presentation" | "application/vnd.apple.keynote" | "application/vnd.apple.pages" | "application/vnd.apple.numbers" | "text/plain" | "text/markdown";
             /** @description Images are limited to 10 MiB; supported audio/video to 90 MiB. */
             bytes: number;
         };
@@ -1238,7 +1322,7 @@ export interface components {
             status: "ready";
             bytes: number;
             /** @enum {string} */
-            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "video/mp4" | "video/webm" | "audio/mpeg" | "audio/wav";
+            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "video/mp4" | "video/webm" | "audio/mpeg" | "audio/wav" | "application/pdf" | "application/msword" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.ms-excel" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "application/vnd.ms-powerpoint" | "application/vnd.openxmlformats-officedocument.presentationml.presentation" | "application/vnd.apple.keynote" | "application/vnd.apple.pages" | "application/vnd.apple.numbers" | "text/plain" | "text/markdown";
             sha256: string;
             uri: string;
             /** Format: date-time */
@@ -1281,8 +1365,9 @@ export interface components {
                 message: string;
                 /** @enum {string} */
                 type: "invalid_request_error" | "authentication_error" | "permission_error" | "insufficient_quota" | "rate_limit_error" | "server_error";
+                /** @description The request field the error is about, as a dot path (for example `temperature`, `messages.1.content.0`, `stream_options.include_usage`). `null` when the error is not about a single field. */
                 param?: string | null;
-                /** @description Stable machine-readable reason, for example `invalid_request`, `invalid_api_key`, `insufficient_balance`, `model_not_allowed`, `model_unavailable`, `rate_limit_exceeded`. */
+                /** @description Stable machine-readable reason, for example `invalid_request`, `unsupported_parameter` (the model does not accept this field, value or message part), `content_rejected` (the model's content policy refused the request; HTTP 400, and retrying the same input will be refused again), `model_not_found`, `invalid_api_key`, `insufficient_balance`, `model_not_allowed`, `model_unavailable`, `rate_limit_exceeded`, `upstream_failed`. */
                 code: string;
             };
         };
@@ -1293,6 +1378,8 @@ export interface components {
                 /** @enum {string} */
                 type: "invalid_request_error" | "authentication_error" | "billing_error" | "permission_error" | "not_found_error" | "request_too_large" | "rate_limit_error" | "api_error" | "overloaded_error";
                 message: string;
+                /** @description SpicyAPI extension: the same stable reason as `error.code` in the OpenAI shape (for example `content_rejected`, `unsupported_parameter`, `invalid_request`). Official Anthropic SDKs ignore it; read it from the raw error body to tell a content-policy refusal from a bad parameter. */
+                code?: string;
             };
         };
         OpenAIModelList: {
@@ -1307,6 +1394,19 @@ export interface components {
                 created: number;
                 /** @description Model publisher. */
                 owned_by: string;
+                /**
+                 * @description SpicyAPI extension. Output modality.
+                 * @enum {string}
+                 */
+                modality?: "text" | "image" | "video" | "audio";
+                /** @description SpicyAPI extension. The task this identifier runs, for example `chat` or `text-to-video`. Only `chat` models work on the chat, Responses, Messages and Gemini operations. */
+                task?: string;
+                /** @description SpicyAPI extension */
+                context_length?: number;
+                /** @description SpicyAPI extension */
+                max_output_tokens?: number;
+                /** @description SpicyAPI extension, chat models only. Request fields this model accepts (the top-level fields of its input schema). `stream`, `stream_options`, `user`, `metadata` and `store` are handled by the compatible layer for every model and are not listed. Any other field returns `400` with `code: unsupported_parameter`. */
+                supported_parameters?: string[];
             }[];
         };
         ChatCompletionRequest: {
@@ -1332,12 +1432,20 @@ export interface components {
             max_completion_tokens?: number;
             temperature?: number;
             top_p?: number;
+            /** @description Sample only from the k most likely next tokens; only on models that declare it. */
+            top_k?: number;
+            /** @description Best-effort repeatable sampling; only on models that declare it. */
+            seed?: number;
+            /** @description Up to 4 stop sequences (some models accept only one); only on models that declare it. */
+            stop?: string | string[];
             tools?: {
                 [key: string]: unknown;
             }[];
             tool_choice?: string | {
                 [key: string]: unknown;
             };
+            /** @description Set false to allow at most one tool call per turn; only on models that declare it. */
+            parallel_tool_calls?: boolean;
             response_format?: {
                 [key: string]: unknown;
             };
@@ -1475,6 +1583,13 @@ export interface components {
                 code: number;
                 message: string;
                 status: string;
+                /** @description One `google.rpc.ErrorInfo` whose `reason` is the upper-case form of the OpenAI-shape `error.code` (for example `CONTENT_REJECTED`, `UNSUPPORTED_PARAMETER`, `INVALID_REQUEST`) and whose `domain` is `api.spicyapi.ai`. `status` alone cannot tell a content-policy refusal from a bad parameter: both are `INVALID_ARGUMENT`. */
+                details?: {
+                    /** @constant */
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo";
+                    reason: string;
+                    domain: string;
+                }[];
             };
         };
         AnthropicMessageRequest: {
@@ -1488,8 +1603,10 @@ export interface components {
             max_tokens: number;
             temperature?: number;
             top_p?: number;
+            top_k?: number;
             stop_sequences?: string[];
             tools?: Record<string, never>[];
+            /** @description `disable_parallel_tool_use: true` is translated to `parallel_tool_calls: false`. */
             tool_choice?: Record<string, never>;
             /** @default false */
             stream: boolean;
@@ -1643,7 +1760,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
-        /** @description Error in the OpenAI `{error:{message,type,param,code}}` shape. The HTTP status is the same one `/api/v1` would return. */
+        /** @description Error in the OpenAI `{error:{message,type,param,code}}` shape. The HTTP status is the same one `/api/v1` would return. A content-policy refusal is HTTP 400 with `code: content_rejected`, so it can be told apart from a parameter error (`invalid_request` / `unsupported_parameter`, with `param` set when the error is about one field). */
         OpenAIError: {
             headers: {
                 [name: string]: unknown;
@@ -1683,6 +1800,8 @@ export interface components {
     };
     requestBodies: never;
     headers: {
+        /** @description The SpicyAPI task (`job_…`) that ran this synchronous text request — the same `taskId` that `GET /api/v1/jobs` and `recordInfo` return, so a call can be matched to its charge. Set as soon as the request is accepted, including on error responses returned after acceptance (the task shows the refund). Absent when the request was rejected before a task was created (for example a validation error), and on a streamed response whose headers were already flushed by a keep-alive before acceptance. */
+        SpicyTaskId: string;
         /** @description Capacity of the active account-level rate-limit window. */
         RateLimitLimit: number;
         /** @description Remaining requests in the active window. */
@@ -1871,6 +1990,7 @@ export interface operations {
             /** @description Server-Sent Events stream of the model answer. */
             200: {
                 headers: {
+                    "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2240,7 +2360,10 @@ export interface operations {
     };
     listOpenAIModels: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only list models with this output modality. An unknown value returns `400` with `param` set to `modality`. */
+                modality?: "text" | "image" | "video" | "audio";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2282,6 +2405,7 @@ export interface operations {
             /** @description One `chat.completion` object, or an SSE stream when `stream` is true. */
             200: {
                 headers: {
+                    "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2320,6 +2444,7 @@ export interface operations {
             /** @description One `response` object, or an SSE stream when `stream` is true. */
             200: {
                 headers: {
+                    "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2358,6 +2483,7 @@ export interface operations {
             /** @description One Anthropic `message` object, or an SSE stream when `stream` is true. */
             200: {
                 headers: {
+                    "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2398,6 +2524,7 @@ export interface operations {
             /** @description One `GenerateContentResponse`. */
             200: {
                 headers: {
+                    "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2439,6 +2566,7 @@ export interface operations {
             /** @description An SSE stream (`alt=sse`) or a JSON array of `GenerateContentResponse`. */
             200: {
                 headers: {
+                    "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
                     [name: string]: unknown;
                 };
                 content: {

@@ -1,8 +1,8 @@
 # @spicyapi/sdk
 
 The official TypeScript and JavaScript SDK for [SpicyAPI](https://spicyapi.ai) — one API for video,
-image and chat models. It contains the typed client, webhook verification helpers, a documentation
-index and generated OpenAPI types.
+image, audio and chat models. It contains the typed client, webhook verification helpers, a
+documentation index and generated OpenAPI types.
 
 An SDK is a ready-made code library for **your own Node.js program**. Instead of writing HTTP
 requests by hand, you call functions such as `client.run(...)`, and the SDK attaches your key,
@@ -36,7 +36,7 @@ everything:
 | Try a failed task again, as a new task                         | `retryTask`                                   | **Yes**            |
 | List the tasks created with the current key                    | `listTasks`                                   | No                 |
 | Check your balance, or what the current key spent              | `getBalance` / `getUsage`                     | No                 |
-| Upload a local image, video or audio file                      | `uploadFile` / `uploadBytes` / `uploadBase64` | No                 |
+| Upload a local image, video, audio or document file            | `uploadFile` / `uploadBytes` / `uploadBase64` | No                 |
 | Upload in separate steps (ticket, PUT, commit)                 | `createUploadUrl` / `commitUploadedFile`      | No                 |
 | Get a fresh download link for a result                         | `createDownloadUrl`                           | No                 |
 | Destroy a finished task's stored files and prompt              | `purgeTask`                                   | No (and no refund) |
@@ -44,7 +44,9 @@ everything:
 | Search the documentation, or read the bundled OpenAPI contract | `searchDocumentation` / `readOpenApiContract` | No                 |
 
 "Costs money" means the call holds funds from your balance. You are charged only if the task
-succeeds, never more than the held amount; failed and expired tasks release the hold in full.
+succeeds, never more than the held amount; failed and expired tasks release the hold in full. The
+one exception is a `content_rejected` refusal on a model whose page states that refusals are billed,
+which settles at the accepted estimate.
 
 **Evaluating before you have a key?** One catalogue read is public, so "which models exist and what
 do they cost" can be answered before signing up. It is a plain HTTPS GET rather than an SDK method:
@@ -278,11 +280,11 @@ stops your request or wait, never an accepted task. API responses larger than 4 
 | `createDownloadUrl(taskId, key?)`                                                                 | `key`, `url`, `expiresAt` (about 20 minutes)                                                                                          | No           |
 | `purgeTask(taskId)`                                                                               | `contentState`, `purgedAt`, `billingRetained: true`, `mediaDeletionPending`                                                           | No           |
 
-`uploadFile` detects the type from `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.mp4`, `.webm`, `.mp3`
-and `.wav`; for other names pass `contentType`. Otherwise it throws a `TypeError` that lists all
-nine:
-`contentType is required unless the file extension is one of: gif, jpeg, jpg, png, webp, mp4, webm, mp3, wav`.
-Images may be up to 10 MiB, audio and video up to 90 MiB.
+`uploadFile` detects the type from the extension: `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.mp4`,
+`.webm`, `.mp3` and `.wav` for media, and `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`,
+`.key`, `.pages`, `.numbers`, `.txt` and `.md` for reference documents. For other names pass
+`contentType`; otherwise it throws a `TypeError` that lists every supported extension. Images may be
+up to 10 MiB; audio, video and documents up to 90 MiB.
 
 `createTask` and `run` accept `retentionSeconds`, sent as `X-Spicy-Retention`, to shorten how long
 that one task's generated media, result payload, prompt and other input text are kept; billing
@@ -334,10 +336,11 @@ A failed **call** throws. A failed **task** does not: `run` and `waitForTask` re
 Branch on `code`, never on `message`, and quote `requestId` to support. Common codes: `400` invalid
 input (compare with the schema), `40003` the uploaded bytes do not match their upload ticket,
 `40004` no deployment can serve this parameter combination, `401` key problem, `40201` balance too
-low, `40202` spend cap reached, `40301` key may not use this model, `40901` quote expired or price
-changed (quote again), `429` too many requests (wait `retryAfterSeconds`), `503` a dependency is
-temporarily unavailable, `50301` model unavailable right now, `50302` a synchronous generation
-failed upstream and was refunded.
+low, `40202` spend cap reached, `40301` key may not use this model, `40310` the account's email
+address is not verified yet (open the verification link; the key starts working as soon as it is
+verified, with no change on your side), `40901` quote expired or price changed (quote again), `429`
+too many requests (wait `retryAfterSeconds`), `503` a dependency is temporarily unavailable, `50301`
+model unavailable right now, `50302` a synchronous generation failed upstream and was refunded.
 
 The four codes that need a specific move rather than a plain retry:
 
@@ -384,8 +387,8 @@ See the [errors guide](https://docs.spicyapi.ai/docs/errors).
 
 A model record's `pricing` array holds one entry per currently effective price tier, and
 `startingPrice` is the cheapest of them. Each entry has a `unit` (`per_image`, `per_second`,
-`per_request` or `per_1k_tokens`), a `price` as an exact decimal USD string, and a `variant` that
-names the tier:
+`per_request`, `per_1k_tokens` or `per_1k_characters`, the last for speech priced by the length of
+the input text), a `price` as an exact decimal USD string, and a `variant` that names the tier:
 
 | `variant`                           | What it means                                                                |
 | ----------------------------------- | ---------------------------------------------------------------------------- |
@@ -440,6 +443,11 @@ specifies. Uploading is optional:
   `spicy://` URI valid for one day. Put `file.uri` in the model's media field.
 - `createUploadUrl` → PUT → `commitUploadedFile` is the same flow in separate steps.
 - `uploadBase64` accepts a Data URI or raw standard Base64 with an explicit `contentType`.
+- Reference documents (PDF, Word, Excel, PowerPoint, Keynote, Pages, Numbers, plain text and
+  Markdown) upload the same way, for models whose schema declares a document field such as
+  `reference_file_url`.
+- Image fields also accept your own persona images as `spicy://p/<assetId>`. You create them in the
+  console, and only API keys created in your personal workspace can use them.
 - Small schema-declared image fields accept Data URIs directly in `input` (1 MiB decoded per image,
   2 MiB total JSON body, with documented pixel limits). The upload helper handles larger files
   within upload and model limits.
@@ -464,7 +472,14 @@ inside the 14-day result retention window; poll again to refresh one. See the
 Not every task hands back a file. A task can also answer in `output.text` — audio transcription is
 the clearest case: it is an ordinary asynchronous media task, but what it produces is words. Read
 `output.text` when the model you selected produces text, and do not treat an empty `output.assets`
-as a failure on those models.
+as a failure on those models. Speech-to-text models that report more also return `output.transcript`
+(`TaskTranscript`): the detected language, the duration, per-word `start` and `end` times in
+seconds, and one entry per channel when multichannel transcription was requested.
+
+Layer decomposition results put a `layer` object on each asset (`TaskOutputAsset`). The first asset
+is the base image with `zIndex` 0; every other asset is a transparent PNG layer. Stack them by
+ascending `zIndex`, placing each one inside its `boundingBox` (`[x1, y1, x2, y2]` in base-image
+pixels) when the model reports one.
 
 ## Webhooks
 
@@ -585,7 +600,17 @@ Notes that matter in production:
   client; its tokens are already counted in `completion_tokens`.
 - Compatibility requests use the price at acceptance. Use native `quoteTask` and `createTask` when
   confirming `expectedCost` is required.
-- Stream completion is not proof of financial settlement.
+- Stream completion is not proof of financial settlement. Once a `/v1` text request is accepted, the
+  `X-Spicy-Task-Id` response header names the task that holds the charge (also on errors returned
+  after acceptance); read it with `.withResponse()` and look the task up with `getTask`. It is
+  absent when the request was rejected before a task existed, or when a keep-alive had already sent
+  the stream's headers.
+- While a long reasoning model has produced nothing yet, the stream carries `: keep-alive` comment
+  lines; the official client skips them. A non-streaming call that takes longer than about 100
+  seconds is cut off by the network edge and not charged, so use `stream: true` for long reasoning.
+- A content-policy refusal is `400` with `code: content_rejected`; a field or message part the model
+  does not accept is `400` with `code: unsupported_parameter` and `param` naming it. Change the
+  input rather than retrying unchanged.
 
 OpenAI is not the only protocol the text models answer. The same catalogue is reachable through
 `POST /v1/chat/completions` and `POST /v1/responses` (OpenAI), `POST /v1/messages` (Anthropic) and
@@ -596,6 +621,56 @@ so there is no chat method to look for here.
 
 See the [complete compatibility guide](https://docs.spicyapi.ai/docs/quotes-and-compatibility) and
 the [official JavaScript client](https://github.com/openai/openai-node).
+
+### Images, video and audio in a message
+
+Some chat models read images, and a few also read video and audio; the answer is still text. Which
+parts a model takes is declared in its `inputSchema` under `properties.messages` (read it with
+`getModel`), and a part the model does not take returns `400` with `code: unsupported_parameter`,
+charging nothing. Upload a local file with this SDK and put its `spicy://` URI in the part:
+
+```js
+import OpenAI from "openai";
+import { SpicyClient } from "@spicyapi/sdk";
+
+const spicy = new SpicyClient();
+const clip = await spicy.uploadFile("./clip.mp4");
+
+const openai = new OpenAI({
+  apiKey: process.env.SPICY_API_KEY,
+  baseURL: "https://api.spicyapi.ai/v1",
+  maxRetries: 0,
+});
+const { data: completion, response } = await openai.chat.completions
+  .create({
+    model: process.env.SPICY_MODEL,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What happens in this clip?" },
+          { type: "video_url", video_url: { url: clip.uri } },
+        ],
+      },
+    ],
+  })
+  .withResponse();
+console.log(completion.choices[0].message.content);
+console.log(response.headers.get("x-spicy-task-id")); // the task that holds the charge
+```
+
+| Part         | Shape                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------- |
+| Image        | `{ type: "image_url", image_url: { url } }` — HTTPS, `spicy://` or a small `data:` URI |
+| Video        | `{ type: "video_url", video_url: { url } }` — an upload, or a public HTTPS URL         |
+| Audio file   | `{ type: "audio_url", audio_url: { url } }` — an upload only                           |
+| Inline audio | `{ type: "input_audio", input_audio: { data, format } }` — Base64, `wav` or `mp3`      |
+
+`video_url` and `audio_url` are not in the `openai` package's TypeScript types; the client sends
+them unchanged, so in TypeScript cast the content array
+(`as OpenAI.Chat.ChatCompletionContentPart[]`). Uploaded video and audio in one request can total at
+most 14 MB. See
+[sending media to a text model](https://docs.spicyapi.ai/docs/text-and-streaming#media-input).
 
 ## Troubleshooting
 
