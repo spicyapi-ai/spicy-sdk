@@ -88,7 +88,7 @@ name your files `.mjs`. From CommonJS, use `await import("@spicyapi/sdk")` insid
 1. Create an account at [spicyapi.ai/register](https://spicyapi.ai/register) — accounts are opened
    in batches, so you may join the waitlist first.
 2. Create a key on the [API keys page](https://spicyapi.ai/console/keys). It starts with `sk-spicy-`
-   and is shown once. New keys come with a low daily spend cap, which you can change there.
+   and is shown once. New keys have no spend cap unless you set one there.
 3. Add a balance under [Billing](https://spicyapi.ai/console/billing) before running paid tasks.
 4. Put the key in the environment your program reads, never in source:
 
