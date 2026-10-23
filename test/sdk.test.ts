@@ -159,7 +159,10 @@ void test("an oversized body of undeclared length is stopped while reading rathe
   );
   await assert.rejects(client.getBalance(), /exceeded 4194304 bytes/);
   assert.equal(canceled, true);
-  assert.ok(chunks <= 66, `only the block that crosses the limit and the stream prefetch are allowed; ${chunks} blocks were read`);
+  assert.ok(
+    chunks <= 66,
+    `only the block that crosses the limit and the stream prefetch are allowed; ${chunks} blocks were read`,
+  );
 });
 
 void test("health and readiness probes do not require an API key", async () => {
@@ -426,7 +429,11 @@ void test("run submits exactly once and waits for the stored output, without pre
   assert.ok(mock.calls.slice(1).every((call) => call.url.includes("/jobs/recordInfo")));
   assert.equal(new Headers(mock.calls[0]?.init?.headers).get("idempotency-key"), "run-once");
   await assert.rejects(client.run({ model: "model", input: {} }, { timeoutMs: 0 }), TypeError);
-  assert.equal(mock.calls.length, 3, "an invalid wait option must not create a billable task first");
+  assert.equal(
+    mock.calls.length,
+    3,
+    "an invalid wait option must not create a billable task first",
+  );
 });
 
 void test("polling backs off within a ceiling by default, and neither an explicit failure nor an unavailable asset is waited on forever", async () => {
@@ -478,54 +485,62 @@ void test("the overall wait deadline interrupts a stalled HTTP body while preser
   assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 });
 
-void test("a stalled acceptance or status callback still times out, preserving the task identity and never resubmitting", { timeout: 1000 }, async () => {
-  for (const stage of ["accepted", "update"] as const) {
-    const mock = scriptedFetch([
-      envelope({ taskId: "job_callback", state: "queued" }),
-      envelope({ taskId: "job_callback", state: "running" }),
-    ]);
-    const controller = new AbortController();
-    let rejectCallback!: (error: Error) => void;
-    const blocked = new Promise<void>((_resolve, reject) => {
-      rejectCallback = reject;
-    });
-    await assert.rejects(
-      clientWith(mock.fetch).run(
-        { model: "model", input: {} },
-        {
-          timeoutMs: 25,
-          signal: controller.signal,
-          ...(stage === "accepted" ? { onAccepted: () => blocked } : { onUpdate: () => blocked }),
-        },
-      ),
-      { name: "SpicyWaitTimeoutError", taskId: "job_callback" },
-    );
-    assert.equal(mock.calls.filter((call) => call.url.endsWith("/jobs/createTask")).length, 1);
-    assert.equal(mock.calls.length, stage === "accepted" ? 1 : 2);
-    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
-    rejectCallback(new Error("the callback failed after the deadline"));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-});
+void test(
+  "a stalled acceptance or status callback still times out, preserving the task identity and never resubmitting",
+  { timeout: 1000 },
+  async () => {
+    for (const stage of ["accepted", "update"] as const) {
+      const mock = scriptedFetch([
+        envelope({ taskId: "job_callback", state: "queued" }),
+        envelope({ taskId: "job_callback", state: "running" }),
+      ]);
+      const controller = new AbortController();
+      let rejectCallback!: (error: Error) => void;
+      const blocked = new Promise<void>((_resolve, reject) => {
+        rejectCallback = reject;
+      });
+      await assert.rejects(
+        clientWith(mock.fetch).run(
+          { model: "model", input: {} },
+          {
+            timeoutMs: 25,
+            signal: controller.signal,
+            ...(stage === "accepted" ? { onAccepted: () => blocked } : { onUpdate: () => blocked }),
+          },
+        ),
+        { name: "SpicyWaitTimeoutError", taskId: "job_callback" },
+      );
+      assert.equal(mock.calls.filter((call) => call.url.endsWith("/jobs/createTask")).length, 1);
+      assert.equal(mock.calls.length, stage === "accepted" ? 1 : 2);
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+      rejectCallback(new Error("the callback failed after the deadline"));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  },
+);
 
-void test("waiting on a status callback can be cancelled, stopping only the local wait", { timeout: 1000 }, async () => {
-  const mock = scriptedFetch([envelope({ taskId: "job_callback_abort", state: "running" })]);
-  const controller = new AbortController();
-  const reason = new Error("caller canceled");
-  await assert.rejects(
-    clientWith(mock.fetch).waitForTask("job_callback_abort", {
-      signal: controller.signal,
-      onUpdate: () => {
-        controller.abort(reason);
-        return new Promise<void>(() => {});
-      },
-    }),
-    (error) => error === reason,
-  );
-  assert.equal(mock.calls.length, 1);
-  assert.ok(mock.calls[0]?.url.includes("/jobs/recordInfo"));
-  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
-});
+void test(
+  "waiting on a status callback can be cancelled, stopping only the local wait",
+  { timeout: 1000 },
+  async () => {
+    const mock = scriptedFetch([envelope({ taskId: "job_callback_abort", state: "running" })]);
+    const controller = new AbortController();
+    const reason = new Error("caller canceled");
+    await assert.rejects(
+      clientWith(mock.fetch).waitForTask("job_callback_abort", {
+        signal: controller.signal,
+        onUpdate: () => {
+          controller.abort(reason);
+          return new Promise<void>(() => {});
+        },
+      }),
+      (error) => error === reason,
+    );
+    assert.equal(mock.calls.length, 1);
+    assert.ok(mock.calls[0]?.url.includes("/jobs/recordInfo"));
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  },
+);
 
 void test("an asynchronous observability failure raises no unhandled rejection and never retries an accepted task", async () => {
   const mock = scriptedFetch([envelope({ taskId: "job_observer", state: "queued" })]);
@@ -1069,7 +1084,8 @@ void test("a task record carries contentState and the effective retention, telli
   assert.equal(task.contentRemovedBy, "user");
   assert.equal(task.purgedAt, "2026-09-13T10:00:00Z");
   assert.equal(task.retention?.source, "header");
-});const CLOUDFLARE_BLOCK_PAGE =
+});
+const CLOUDFLARE_BLOCK_PAGE =
   '<!DOCTYPE html><html lang="en-US"><head><title>Attention Required! | Cloudflare</title>' +
   "</head><body><h1>Sorry, you have been blocked</h1></body></html>";
 
@@ -1086,7 +1102,10 @@ void test("a 403 carrying an edge block page says the request never reached the 
     assert.equal(error.status, 403);
     // What answered has to survive into the error: the page's own title is the identifying line.
     // The regions sentence leads: it is the only part the reader can act on.
-    assert.match(error.message, /^Refused before reaching SpicyAPI \(HTTP 403\)\. The service is not offered in every region: https:\/\/spicyapi\.ai\/legal\/terms\./);
+    assert.match(
+      error.message,
+      /^Refused before reaching SpicyAPI \(HTTP 403\)\. The service is not offered in every region: https:\/\/spicyapi\.ai\/legal\/terms\./,
+    );
     assert.match(error.message, /proxy, gateway or CDN edge answered instead/);
     // What answered still has to survive into the error, after the part that matters.
     assert.match(error.message, /Attention Required! \| Cloudflare"\.$/);
@@ -1169,7 +1188,10 @@ void test("an edge block that parses as JSON is still reported as not ours", asy
     assert.doesNotMatch(error.message, /request failed with HTTP/);
     assert.match(error.message, /^Refused before reaching SpicyAPI \(HTTP 403\)\./);
     // The intermediary's own words, not a dump of its JSON, and no doubled full stop.
-    assert.match(error.message, /instead - the body said "Error 1010: Access denied - The site owner has blocked access based on your browser's signature\."$/);
+    assert.match(
+      error.message,
+      /instead - the body said "Error 1010: Access denied - The site owner has blocked access based on your browser's signature\."$/,
+    );
     return true;
   });
 });
@@ -1313,11 +1335,14 @@ void test("no proxy hint once Node.js is told to use the proxy", async () => {
 
 void test("no proxy hint for a caller-supplied fetch, which may route through a proxy itself", async () => {
   await withProxyEnv({ HTTPS_PROXY: "http://127.0.0.1:7890" }, async () => {
-    await assert.rejects(clientWith(scriptedFetch([edgeBlock()]).fetch).getBalance(), (error: unknown) => {
-      assert.ok(error instanceof SpicyApiError);
-      assert.doesNotMatch(error.message, /NODE_USE_ENV_PROXY/);
-      return true;
-    });
+    await assert.rejects(
+      clientWith(scriptedFetch([edgeBlock()]).fetch).getBalance(),
+      (error: unknown) => {
+        assert.ok(error instanceof SpicyApiError);
+        assert.doesNotMatch(error.message, /NODE_USE_ENV_PROXY/);
+        return true;
+      },
+    );
   });
 });
 

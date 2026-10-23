@@ -109,9 +109,18 @@ export interface paths {
          *     error or drops the connection, the answer is complete, the stream ends
          *     with `[DONE]` as usual, and the delivered usage is charged.
          *
-         *     Non-streaming calls to the compatible endpoints get no keep-alive: a
-         *     response that takes longer than about 100 seconds is cut off by the
-         *     network edge and is not charged. Use `stream: true` for long reasoning.
+         *     Non-streaming calls to the compatible endpoints are kept open too. A
+         *     call that finishes within about 30 seconds is answered exactly as
+         *     before. A longer one commits a `200` response with
+         *     `Content-Type: application/json` and the `X-Spicy-Keepalive: 1` header
+         *     after about 30 seconds, then sends a newline every 15 seconds until the
+         *     answer is ready; JSON allows leading whitespace, so standard parsers
+         *     read the body unchanged. Because the status is already sent, a failure
+         *     after that point arrives as the protocol's own error object in the body
+         *     of the `200` response, with the same code and message it would
+         *     otherwise have had, and the hold is still released. The whitespace is
+         *     not model output: disconnecting after it follows the usual disconnect
+         *     rules, and an answer that ends up empty or refused is still refunded.
          *
          *     Generation models (image, video, audio) are asynchronous and must use
          *     `createTask` with `recordInfo` polling; calling this endpoint for them
@@ -367,8 +376,11 @@ export interface paths {
          *     bytes with PUT and copy every returned header. Supported media types are
          *     JPEG, PNG, WebP and GIF images (10 MiB), or MP4/WebM video and
          *     MP3/WAV audio (90 MiB, at most 600 seconds). Audio/video commit verifies
-         *     format and measurable duration; it does not apply a platform content filter. After PUT,
-         *     call the file commit endpoint and use its spicy:// URI in task input.
+         *     format and measurable duration; it does not apply a platform content filter.
+         *     LoRA weights are uploaded as `application/octet-stream` (a `.safetensors`
+         *     file, up to 2 GiB; the ticket stays valid for 2 hours); commit checks that it
+         *     is a complete safetensors file, and the returned URI goes in `loras[].path`.
+         *     After PUT, call the file commit endpoint and use its spicy:// URI in task input.
          */
         post: operations["createUploadUrl"];
         delete?: never;
@@ -402,6 +414,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import a LoRA weights file from a link
+         * @description Downloads a `.safetensors` LoRA file once and stores it as your upload, so a
+         *     file that needs a sign-in can still be used without making it public. `url`
+         *     accepts a Hugging Face repo id (`owner/repo`, when the repo has exactly one
+         *     `.safetensors` file), a Hugging Face repo or file page, or any direct https
+         *     link. `token` is optional: a Hugging Face access token, or a Civitai API key,
+         *     used only for this download and never stored. The response matches the
+         *     commit endpoint; put its spicy:// URI in `loras[].path`. Imported files are
+         *     kept for the same time as other uploads. Public links can also be passed to
+         *     `loras[].path` directly, without importing.
+         */
+        post: operations["importLoraFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/common/download-url": {
         parameters: {
             query?: never;
@@ -417,6 +457,217 @@ export interface paths {
          *     output of that task. Leave `key` empty to select the first output.
          */
         post: operations["createDownloadUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List your saved assets
+         * @description Returns the ready assets of the key's library, one page at a time. Pass
+         *     the previous page's `nextCursor` as `cursor` to continue; it is absent on
+         *     the last page, and a cursor only works with the `sort` it came from.
+         *     Filter with `kind`, `source` (comma-separated), `favorite`, `collectionId`
+         *     (one collection of the key's library; collections are created and edited in
+         *     the console, and an id outside this library returns 404), `entityId` (the
+         *     images of one character) and a case-insensitive name search in `q`.
+         *     Order with `sort`: `recent` (default, newest first), `oldest`, `name`
+         *     (case-insensitive A to Z) or `size` (largest first).
+         *
+         *     Every item carries a stable `uri` (`spicy://a/<id>`) and a private
+         *     `previewUrl` signed for at most 20 minutes. The `uri` works only in
+         *     generation requests made with keys of the same workspace (any media field
+         *     of a model input); nothing in this API returns a permanent or publicly
+         *     reachable link, so the asset library cannot be used as file hosting.
+         *     Responses are `private, no-store`. Listing and reading assets is limited
+         *     to 60 requests per minute per account.
+         *
+         *     The key decides the library: a key created in your personal workspace
+         *     reaches your personal library, and a key created in a team workspace
+         *     (by any member) reaches that team's shared library. A team key never
+         *     reaches anyone's personal library. What a team key may change follows
+         *     the current role of the member who created it: owner and admin can save,
+         *     rename and delete anything; developer can save and rename or delete only
+         *     what they saved; billing and readonly can only read and use assets. If
+         *     that member has left the team the key gets 403 with `data.reason`
+         *     `asset_workspace_forbidden`.
+         */
+        get: operations["listAssets"];
+        put?: never;
+        /**
+         * Save a file to your asset library
+         * @description Copies a file into the key's library (your personal library, or the
+         *     team's shared library for a team key), where it is kept until it is
+         *     deleted, the owner closes the account or the team is deleted. Choose one
+         *     source:
+         *
+         *     - `source: task_output` with `taskId` and either the output `key` or its
+         *       zero-based `index` (the order of `output.assets` in `recordInfo`). The
+         *       task must be one of your own successful tasks; with a team key, a task
+         *       of that team.
+         *     - `source: upload` with the `fileId` of a committed upload.
+         *     - `source: url` with a public `http` or `https` address on port 80 or 443,
+         *       without a username or password. The whole file is downloaded once
+         *       through a fetcher that refuses private and internal addresses, and its
+         *       type is read from the file itself: only JPEG, PNG, WebP and GIF images,
+         *       MP4 and WebM video, and MP3, WAV, FLAC and Ogg audio are accepted.
+         *       Links to SpicyAPI storage are refused; save those with `task_output` or
+         *       `upload` instead.
+         *
+         *     `Idempotency-Key` is required and bound to the request for 24 hours.
+         *     Saving the same source again returns the existing asset without using
+         *     more space. Dimensions and durations are measured by the server.
+         *
+         *     Storage unlocks with the owner's lifetime top-ups (see
+         *     `GET /api/v1/assets/usage`); the owner's personal library and all of
+         *     their team libraries share one allowance. Without any top-up, saving
+         *     returns 400 (`data.reason` `asset_library_locked`) explaining how much to
+         *     top up. A full allowance (`asset_library_full`) or a file above the
+         *     plan's per-file limit (`asset_file_too_large`) also returns 400 naming the
+         *     plan and what the next plan unlocks; for team members who cannot top up,
+         *     the message asks the team owner to upgrade instead of naming an amount.
+         *     Lowering a plan never deletes saved assets. Saving is limited to 30
+         *     requests per minute and a daily number of new assets per allowance (429
+         *     with `Retry-After` until 00:00 UTC, `asset_daily_limit`). If storage is
+         *     full across the platform the request returns 503 (`asset_storage_full`).
+         *     A team role that cannot save gets 403 (`asset_permission_denied`).
+         */
+        post: operations["createAsset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assets/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get your asset library plan, usage and limits
+         * @description Plans unlock automatically with the owner's lifetime top-ups and never
+         *     go down. Returns the current plan, how much is stored, its limits, the
+         *     next plan and how much more to top up to reach it, the full plan table,
+         *     and how many assets were created today against the daily limit. Usage
+         *     and limits cover the owner's whole allowance: the personal library plus
+         *     every team library they own. A plan with all limits at 0 cannot save new
+         *     assets; assets already saved stay usable. Byte values use binary units
+         *     (500 MB = 524288000 bytes).
+         *
+         *     `scope` tells which library the key reaches and what it may do there.
+         *     When `scope.canTopUp` is false (a team key whose creator is not the
+         *     team owner, billing members included), `lifetimeTopupUsd` and
+         *     `topupToNextTierUsd` are omitted.
+         */
+        get: operations["getAssetUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assets/{assetId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assetId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get one asset with a fresh private preview
+         * @description The `previewUrl` is signed for at most 20 minutes; persist `uri`, not the preview. An unknown asset, another account's asset and an asset in a library this key does not reach return the same 404.
+         */
+        get: operations["getAsset"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete an asset
+         * @description The asset disappears immediately (it is also removed from every
+         *     collection) and its `uri` stops working in new requests; the stored file
+         *     is then deleted. Deleting an unknown or
+         *     already deleted asset, or one in a library this key does not reach,
+         *     returns the same result, so retries are safe and no Idempotency-Key is
+         *     needed. Deleting does not reset the daily limit on new assets. In a team
+         *     library, billing and readonly members cannot delete, and developers can
+         *     delete only assets they saved (403, `data.reason`
+         *     `asset_permission_denied`).
+         */
+        delete: operations["deleteAsset"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename an asset or mark it as a favorite
+         * @description Send `name`, `favorite` or both; only what you send changes, and a body with neither is rejected as an invalid name. The `uri` stays the same and nothing is copied. Favorites belong to the library, so everyone in a team sees the same ones. Repeating the same request is safe, so no Idempotency-Key is needed. In a team library, billing and readonly members cannot rename or change favorites, and developers can do so only for assets they saved (403, `data.reason` `asset_permission_denied`).
+         */
+        patch: operations["renameAsset"];
+        trace?: never;
+    };
+    "/api/v1/assets/entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the characters in your asset library
+         * @description A character is a named set of images saved in the same library, kept in
+         *     the order arranged in the console. It references those assets instead of
+         *     copying them: deleting a character never deletes its images, and deleting
+         *     an image removes it from every character. Characters are created and
+         *     edited in the console; this API only reads them.
+         *
+         *     The key decides the library exactly as for `GET /api/v1/assets`. Each
+         *     image is an asset with its stable `uri` (`spicy://a/<id>`), usable in
+         *     generation requests made with keys of the same workspace, and a private
+         *     `previewUrl` signed for at most 20 minutes. `cover` is the cover image
+         *     (null while the character has no images).
+         *
+         *     Newest first, one page at a time: pass the previous page's `nextCursor`
+         *     as `cursor`. Pass `assetId` to list only the characters that contain that
+         *     asset. Responses are `private, no-store`; reading characters shares the
+         *     limit of 60 requests per minute per account with reading assets.
+         */
+        get: operations["listAssetCharacters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assets/entities/{entityId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entityId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get one character with its images in order
+         * @description An unknown character, another account's character and one in a library this key does not reach return the same 404. Each image carries a fresh private `previewUrl`; persist the `uri` values, not the previews.
+         */
+        get: operations["getAssetCharacter"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -470,9 +721,23 @@ export interface paths {
          *     when the model declares them (each model page lists its own set);
          *     `stream`,
          *     `stream_options`, `user`, `metadata` and `store` are handled by this
-         *     layer. Any other parameter is forwarded to the model's input schema
-         *     and rejected with `400` when the model does not declare it — a
-         *     parameter is never dropped silently.
+         *     layer. Pure sampling parameters the model does not declare
+         *     (`temperature`, `top_p`, `top_k`, `min_p`, `top_a`,
+         *     `frequency_penalty`, `presence_penalty`, `repetition_penalty`), `n: 1`,
+         *     an empty `stop`, `stop` on a model without stop sequences,
+         *     `reasoning_effort` on a model without reasoning levels, and an
+         *     OpenRouter-style `reasoning` object that cannot be translated are
+         *     ignored, and the response lists them in the `X-Spicy-Ignored-Params`
+         *     header. Values the model declares but cannot take as sent are changed
+         *     to the nearest accepted value and listed as `name=value` in the
+         *     `X-Spicy-Adjusted-Params` header: a sampling value outside the model's
+         *     range is clamped to the bound, a `stop` list longer than the model
+         *     allows keeps its first entries, a `reasoning_effort` level the model
+         *     does not offer becomes the nearest level it does (the lower one on a
+         *     tie), and `reasoning.effort` (or `reasoning.enabled: false`, as
+         *     `none`) becomes `reasoning_effort`. Any other parameter is forwarded to
+         *     the model's input schema and rejected with `400` when the model does
+         *     not declare it.
          *
          *     `stream: true` returns a Server-Sent Events stream of
          *     `chat.completion.chunk` objects terminated by `data: [DONE]`. Every
@@ -485,6 +750,15 @@ export interface paths {
          *     `usage`. The same hold, settlement and refund rules as
          *     `/api/v1/jobs/stream` apply; the `X-Spicy-Task-Id` response header names
          *     the task that holds the charge.
+         *
+         *     A non-streaming call that is still running after about 30 seconds is
+         *     kept open: the `200` status and the `X-Spicy-Keepalive: 1` header go out
+         *     first, followed by a newline every 15 seconds and then the JSON body.
+         *     A failure after that point is the usual `{"error": {...}}` object in the
+         *     body of that `200` response, so check for an `error` key when the
+         *     header is present. The same applies to `/v1/responses`, `/v1/messages`
+         *     (Anthropic error object) and `:generateContent` (Gemini error object,
+         *     whose `error.code` keeps the HTTP status the error would have had).
          *
          *     Errors a client can act on: an unknown `model` returns `404` with
          *     `code: model_not_found`, the ID shape (`publisher/model/chat`) and the
@@ -519,6 +793,11 @@ export interface paths {
          *     `text.format`, `reasoning.effort` and `stream`. The request is
          *     translated to a chat completion internally. `previous_response_id`
          *     is rejected with `400`; send the full history in `input` instead.
+         *     As on Chat Completions, sampling parameters the model does not
+         *     declare are ignored and listed in the `X-Spicy-Ignored-Params`
+         *     response header, and values outside the model's range or levels are
+         *     changed to the nearest accepted value and listed in
+         *     `X-Spicy-Adjusted-Params`.
          *
          *     Non-streaming calls return a `response` object with `output[]`
          *     (`message` and `function_call` items) and `usage`. Streaming calls
@@ -585,7 +864,11 @@ export interface paths {
          *     `google/gemini-3-flash-preview`). Validation, pricing and availability are
          *     identical to `/v1/chat/completions`. The response is one
          *     `GenerateContentResponse`. Errors use the Google
-         *     `{error:{code,message,status}}` shape.
+         *     `{error:{code,message,status}}` shape. A call still running after about
+         *     30 seconds is kept open with leading whitespace and the
+         *     `X-Spicy-Keepalive: 1` header, as described on
+         *     `/v1/chat/completions`; a failure after that point is the same error
+         *     object inside a `200` response.
          */
         post: operations["geminiGenerateContent"];
         delete?: never;
@@ -758,11 +1041,16 @@ export interface components {
             code?: 400 | 40003 | 40004 | 401 | 40201 | 40202 | 403 | 40301 | 40302 | 40303 | 40310 | 404 | 409 | 40901 | 413 | 429 | 500 | 503 | 50301 | 50302;
             /** @description Human-readable explanation, English unless `Accept-Language` or the account's API error language selects another supported language. Never parse it; branch on `code`. */
             msg?: string;
+            /** @description Present only when the failure carries a machine-readable reason; otherwise absent. `code`, the HTTP status and `msg` are the same with or without it. `asset_library_locked` (400): the asset library opens after the first top-up. `asset_library_full` (400): the allowance is full. `asset_file_too_large` (400): the file is above the plan's per-file limit. `asset_daily_limit` (429): the daily number of new assets is reached; honour `Retry-After`. `asset_storage_full` (503): storage is full across the platform. `asset_permission_denied` (403): the caller's team role does not allow this change. `asset_workspace_forbidden` (403): this key or workspace cannot reach that library. New values may be added; treat unknown values like an absent reason. */
+            data?: {
+                /** @enum {string} */
+                reason: "asset_library_locked" | "asset_library_full" | "asset_file_too_large" | "asset_daily_limit" | "asset_storage_full" | "asset_permission_denied" | "asset_workspace_forbidden" | "asset_entity_name_taken";
+            };
         };
         CreateTaskRequest: {
             /** @description Exact `model` value from the model catalog. */
             model: string;
-            /** @description Validated against the selected model's inputSchema. Declared image fields accept public HTTPS URLs, committed spicy:// file URIs, your own persona images as spicy://p/<assetId> (created in the console; usable only with API keys you created in your personal workspace, so team workspace keys, another account's id and an unknown id all get the same rejection, and persona images are refused in video, audio and file fields), or standard Base64 Data URIs (image/jpeg, image/png, image/webp, image/gif). Inline images are limited to 1048576 decoded bytes and 8388608 pixels each, 8192 pixels per side, and 16 images / 16777216 pixels in total. The complete JSON request must fit within 2097152 bytes. Model-specific limits still apply. Bare Base64, SVG and inline audio/video are not accepted; use HTTPS or file uploads instead. Inline images are stored as account-bound uploaded files; returned input contains file URIs, never the original Base64 bytes. Quote validation does not upload or reserve funds. If the model's inputSchema declares `seed` and you omit it, we pick a random seed for this task, so two identical requests do not come back with the same output. The chosen seed is returned in the task's `input`; pass it back to hold the draw steady (a fixed seed keeps runs comparable, it does not guarantee an identical result). On the few models that cannot honour `seed` on every request, we still vary it where it applies but do not echo it. A `seed` you send yourself is always used as given. */
+            /** @description Validated against the selected model's inputSchema. Declared image fields accept public HTTPS URLs, committed spicy:// file URIs, legacy persona image references spicy://p/<id> (personas became characters in your personal asset library on 2026-10-12; these references keep resolving to the same images, only in your personal library and only with API keys you created in your personal workspace, so team workspace keys, another account's id and an unknown id all get the same rejection, and they are refused in video, audio and file fields), saved assets as spicy://a/<id> in the media field of the matching kind (the asset must be in the library of the key's workspace: a personal key uses your personal library, a team key uses that team's library; any other asset gets the same rejection as an unknown id), or standard Base64 Data URIs (image/jpeg, image/png, image/webp, image/gif). Inline images are limited to 1048576 decoded bytes and 8388608 pixels each, 8192 pixels per side, and 16 images / 16777216 pixels in total. The complete JSON request must fit within 2097152 bytes. Model-specific limits still apply. Bare Base64, SVG and inline audio/video are not accepted; use HTTPS or file uploads instead. Inline images are stored as account-bound uploaded files; returned input contains file URIs, never the original Base64 bytes. Quote validation does not upload or reserve funds. If the model's inputSchema declares `seed` and you omit it, we pick a random seed for this task, so two identical requests do not come back with the same output. The chosen seed is returned in the task's `input`; pass it back to hold the draw steady (a fixed seed keeps runs comparable, it does not guarantee an identical result). On the few models that cannot honour `seed` on every request, we still vary it where it applies but do not echo it. A `seed` you send yourself is always used as given. Models that offer an economy route declare the boolean `official_fallback` (default `true`): the request runs on the economy route first and, if that fails and the field is `true`, is retried once on the official route. The hold is the highest price the request can be billed at (the official price while the fallback is allowed); you are billed the price of the route that actually produced the result and the rest of the hold is released. With `false`, only the economy route is tried and the hold is the economy price. */
             input: {
                 [key: string]: unknown;
             };
@@ -789,6 +1077,10 @@ export interface components {
             unit: string;
             /** Format: date-time */
             expiresAt: string;
+            /** @description Present only for models with an economy route (`official_fallback`). What you are charged when the economy route produces the result. `estimatedCost` and `maxCharge` remain the amount held, which is the most you can be charged with the official fallback allowed. */
+            expectedCharge?: components["schemas"]["USDString"];
+            /** @description Present only for models with an economy route. The routes this request can be billed at, economy first. `[economy]` when `official_fallback` is `false`; `[official]` when the request uses an option only the official route supports. */
+            billingRoutes?: ("economy" | "official")[];
         };
         TaskQuoteEnvelope: components["schemas"]["EnvelopeBase"] & {
             data: components["schemas"]["TaskQuoteResponse"];
@@ -958,6 +1250,11 @@ export interface components {
             cost: components["schemas"]["USDString"];
             /** @description When false, `cost` is the held estimate. When true, `cost` is the final charge. On success the final charge is capped at that hold; unused funds are released. Failed or expired tasks normally release the hold in full; the one exception is a `content_rejected` task on a model whose page states that such refusals are billed, which is settled at the accepted estimate. */
             settled: boolean;
+            /**
+             * @description Present only for models with an economy route, once billing settled a charge for the task: every succeeded task (even when the final charge is zero) and a `content_rejected` task settled at the accepted estimate under the model's stated refusal billing. `economy`: the economy route ran it and the economy price applied. `official`: the official fallback ran it and the official price applied. Omitted while unsettled, for tasks whose hold was released in full (failed, expired) and for every other model.
+             * @enum {string}
+             */
+            billingRoute?: "economy" | "official";
             /** Format: date-time */
             createdAt: string;
             /**
@@ -1122,6 +1419,8 @@ export interface components {
             offerEndsAt?: string;
             /** @constant */
             currency: "USD";
+            /** @description Present only for models with an economy route. `price` is then the economy-route price and this is the same tier's official price: the most a request is charged when `official_fallback` is `true` and the economy route fails. */
+            officialFallbackPrice?: components["schemas"]["USDString"];
         };
         APIModel: {
             /**
@@ -1160,7 +1459,7 @@ export interface components {
             quantityField: string;
             pricing: components["schemas"]["APIModelPrice"][];
             startingPrice?: components["schemas"]["APIModelPrice"];
-            /** @description JSON Schema draft 2020-12 used by `createTask.input` validation and Playground rendering. Standard JSON Schema keywords validate. Presentation hints live only in a per-property `x-ui` object whose keys are snake_case and drawn from a closed set: `widget`, `order`, `label`, `placeholder`, `rows`, `step`, `unit`, `accept`, `max_size_mb`, `advanced`, `primary`, `affects_price`, `visible_when`, `enum_labels`. `x-ui.order` is the only source of field order (descending first). `x-ui.widget` is one of `textarea`, `text`, `upload`, `multi-upload`, `select`, `radio`, `slider`, `number`, `switch`, `json`, `object-list`, `chat-messages`, `hidden`. Root-level composition is limited to `anyOf`, where every branch contains only `required`, and `allOf`, where each branch is `if` (`required` or `properties.*.const`) plus `then` (`required`); `oneOf`, `not` and `dependentSchemas` never appear. Unknown hints must be ignored. */
+            /** @description JSON Schema draft 2020-12 used by `createTask.input` validation and Playground rendering. Standard JSON Schema keywords validate. Presentation hints live only in a per-property `x-ui` object whose keys are snake_case and drawn from a closed set: `widget`, `order`, `label`, `placeholder`, `rows`, `step`, `unit`, `accept`, `max_size_mb`, `max_duration_seconds`, `max_total_duration_seconds`, `advanced`, `primary`, `affects_price`, `visible_when`, `enum_labels`, `reference_tokens`, `reference_sequence`, `reference_regions`, `mask`. `x-ui.order` is the only source of field order (descending first). `x-ui.widget` is one of `textarea`, `text`, `upload`, `multi-upload`, `select`, `radio`, `slider`, `number`, `switch`, `json`, `object-list`, `chat-messages`, `hidden`. Root-level composition is limited to `anyOf`, where every branch contains only `required`, and `allOf`, where each branch is `if` (`required` or `properties.*.const`) plus `then` (`required`); `oneOf`, `not` and `dependentSchemas` never appear. Unknown hints must be ignored. */
             inputSchema?: {
                 [key: string]: unknown;
             };
@@ -1290,8 +1589,8 @@ export interface components {
         };
         UploadURLRequest: {
             /** @enum {string} */
-            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "video/mp4" | "video/webm" | "audio/mpeg" | "audio/wav" | "application/pdf" | "application/msword" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.ms-excel" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "application/vnd.ms-powerpoint" | "application/vnd.openxmlformats-officedocument.presentationml.presentation" | "application/vnd.apple.keynote" | "application/vnd.apple.pages" | "application/vnd.apple.numbers" | "text/plain" | "text/markdown";
-            /** @description Images are limited to 10 MiB; supported audio/video to 90 MiB. */
+            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "video/mp4" | "video/webm" | "audio/mpeg" | "audio/wav" | "application/pdf" | "application/msword" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/vnd.ms-excel" | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" | "application/vnd.ms-powerpoint" | "application/vnd.openxmlformats-officedocument.presentationml.presentation" | "application/vnd.apple.keynote" | "application/vnd.apple.pages" | "application/vnd.apple.numbers" | "text/plain" | "text/markdown" | "application/octet-stream";
+            /** @description Images are limited to 10 MiB; supported audio/video and documents to 90 MiB; LoRA weights (application/octet-stream, a .safetensors file) to 2 GiB. */
             bytes: number;
         };
         UploadURLResponse: {
@@ -1339,6 +1638,12 @@ export interface components {
             msg?: "success";
             data: components["schemas"]["FileCommitResponse"];
         };
+        LoraImportRequest: {
+            /** @description Hugging Face repo id (owner/repo), a Hugging Face repo or file page, or a direct https link to a .safetensors file. */
+            url: string;
+            /** @description Optional Hugging Face access token or Civitai API key, used only for this download and never stored. */
+            token?: string;
+        };
         DownloadURLRequest: {
             taskId: string;
             /** @description Optional output key; empty selects the first output. */
@@ -1357,6 +1662,182 @@ export interface components {
             /** @constant */
             msg?: "success";
             data: components["schemas"]["DownloadURLResponse"];
+        };
+        AssetCreateRequest: {
+            /** @enum {string} */
+            source: "task_output" | "upload" | "url";
+            /** @description source=task_output: one of your own successful tasks. */
+            taskId?: string;
+            /** @description source=task_output: the output key. Send key or index. */
+            key?: string;
+            /** @description source=task_output: zero-based position in output.assets. Send key or index. */
+            index?: number;
+            /** @description source=upload: a committed upload (fil_… or spicy://f/fil_…). */
+            fileId?: string;
+            /** @description source=url: a public http or https address on port 80 or 443, without credentials. */
+            url?: string;
+            /** @description Defaults to "Saved asset". */
+            name?: string;
+        };
+        Asset: {
+            id: string;
+            /** @description Stable reference. Works only in generation requests made with keys of the same workspace; it is never a downloadable link. */
+            uri: string;
+            name: string;
+            /** @enum {string} */
+            kind: "image" | "video" | "audio";
+            contentType: string;
+            bytes: number;
+            width?: number;
+            height?: number;
+            durationSeconds?: number;
+            /** @enum {string} */
+            source: "task_output" | "upload" | "url";
+            /** @description Your task or upload id; for url, an opaque digest of the address (the address itself is not stored). */
+            sourceId: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** @description Private preview signed for you for at most 20 minutes; empty when signing fails. Do not store or share it — persist uri instead. */
+            previewUrl: string;
+            /** Format: date-time */
+            previewUrlExpiresAt?: string;
+            /** @description Favorite mark of the library (shared by everyone in a team). */
+            favorite: boolean;
+            /** @description Public name of the model that generated the asset, for example bytedance/seedream-5.0-pro/text-to-image; empty for uploads and links. */
+            model: string;
+            /** @description Display name of that model; empty when the asset was not generated or the name is unknown. */
+            modelName: string;
+        };
+        AssetEnvelope: components["schemas"]["EnvelopeBase"] & {
+            /** @constant */
+            code?: 200;
+            /** @constant */
+            msg?: "success";
+            data: components["schemas"]["Asset"];
+        };
+        AssetEntity: {
+            id: string;
+            /** @enum {string} */
+            kind: "character";
+            /** @description Unique within the library and kind (case-insensitive). */
+            name: string;
+            note: string;
+            /** @description Empty while the character has no images. */
+            coverAssetId: string;
+            cover: components["schemas"]["Asset"] | null;
+            /** @description The character's images in order. */
+            assets: components["schemas"]["Asset"][];
+            count: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AssetEntityEnvelope: components["schemas"]["EnvelopeBase"] & {
+            /** @constant */
+            code?: 200;
+            /** @constant */
+            msg?: "success";
+            data: components["schemas"]["AssetEntity"];
+        };
+        AssetEntityListEnvelope: components["schemas"]["EnvelopeBase"] & {
+            /** @constant */
+            code?: 200;
+            /** @constant */
+            msg?: "success";
+            data: {
+                items: components["schemas"]["AssetEntity"][];
+                /** @description Absent on the last page. */
+                nextCursor?: string;
+            };
+        };
+        AssetList: {
+            items: components["schemas"]["Asset"][];
+            /** @description Absent on the last page. */
+            nextCursor?: string;
+        };
+        AssetListEnvelope: components["schemas"]["EnvelopeBase"] & {
+            /** @constant */
+            code?: 200;
+            /** @constant */
+            msg?: "success";
+            data: components["schemas"]["AssetList"];
+        };
+        AssetPlan: {
+            /** @description Lowercase plan key, for example free, plus, pro, studio, max. */
+            id: string;
+            /** @description Plan name, for example Free, Plus, Pro, Studio or Max. */
+            name: string;
+            /** @description Lifetime top-ups in USD that unlock this plan. */
+            minTopupUsd: string;
+            /** @description Total storage in bytes (binary units). 0 means saving is closed on this plan. */
+            maxBytes: number;
+            maxCount: number;
+            maxFileBytes: number;
+        };
+        AssetScope: {
+            /** @description The workspace whose library this is: your personal workspace, or the team. Empty for an account that has no personal workspace yet. */
+            workspaceId: string;
+            personal: boolean;
+            /**
+             * @description Always owner for a personal library. For a team key, the current role of the member who created it.
+             * @enum {string}
+             */
+            role: "owner" | "admin" | "developer" | "billing" | "readonly";
+            /** @description Whether new assets can be saved here (owner, admin and developer). */
+            canWrite: boolean;
+            /** @description Whether the caller can see and raise the owner's allowance: only the owner (personal library, or a team key the owner created). Billing members cannot top up for the owner. */
+            canTopUp: boolean;
+        };
+        AssetQuota: {
+            tier: components["schemas"]["AssetPlan"];
+            usage: {
+                count: number;
+                bytes: number;
+            };
+            limits: {
+                tier: string;
+                maxCount: number;
+                maxBytes: number;
+                maxFileBytes: number;
+                /** @description Platform-wide ceiling; 0 disables it. */
+                globalMaxBytes: number;
+                /** @constant */
+                nameMaxChars: 80;
+            };
+            /** @description True when no new asset fits (including plans where saving is closed). */
+            full: boolean;
+            /** @description The next plan with more storage or items; null on the highest plan. */
+            nextTier: components["schemas"]["AssetPlan"] | null;
+            /** @description How much more to top up, in USD, to reach nextTier. Omitted when scope.canTopUp is false. */
+            topupToNextTierUsd?: string;
+            /** @description The owner's lifetime top-ups in USD as a decimal string, for example "25" or "12.50". Omitted when scope.canTopUp is false. */
+            lifetimeTopupUsd?: string;
+            tiers: components["schemas"]["AssetPlan"][];
+            /** @description New assets allowed per owner allowance per UTC day. */
+            dailyCreateLimit: number;
+            createdToday: number;
+            scope: components["schemas"]["AssetScope"];
+        };
+        AssetQuotaEnvelope: components["schemas"]["EnvelopeBase"] & {
+            /** @constant */
+            code?: 200;
+            /** @constant */
+            msg?: "success";
+            data: components["schemas"]["AssetQuota"];
+        };
+        AssetDeletedEnvelope: components["schemas"]["EnvelopeBase"] & {
+            /** @constant */
+            code?: 200;
+            /** @constant */
+            msg?: "success";
+            data: {
+                id: string;
+                /** @constant */
+                deleted: true;
+            };
         };
         /** @description Decimal USD amount encoded as a string to avoid binary floating-point loss. */
         USDString: string;
@@ -1538,7 +2019,7 @@ export interface components {
                 total_tokens?: number;
             };
         };
-        /** @description Google Gemini `generateContent` request. Which generation parameters a model accepts comes from that model's `inputSchema` in `/v1/models` and the catalog; unsupported parameters return 400. */
+        /** @description Google Gemini `generateContent` request. Which generation parameters a model accepts comes from that model's `inputSchema` in `/v1/models` and the catalog. Sampling parameters the model does not declare (temperature, topP, topK, penalties) are ignored and listed in the `X-Spicy-Ignored-Params` response header; any other unsupported parameter returns 400. */
         GeminiGenerateContentRequest: {
             contents: {
                 /** @enum {string} */
@@ -1802,6 +2283,8 @@ export interface components {
     headers: {
         /** @description The SpicyAPI task (`job_…`) that ran this synchronous text request — the same `taskId` that `GET /api/v1/jobs` and `recordInfo` return, so a call can be matched to its charge. Set as soon as the request is accepted, including on error responses returned after acceptance (the task shows the refund). Absent when the request was rejected before a task was created (for example a validation error), and on a streamed response whose headers were already flushed by a keep-alive before acceptance. */
         SpicyTaskId: string;
+        /** @description Present, with the value `1`, only on a non-streaming text response that was still running after about 30 seconds. The `200` status was sent early to keep the connection open, the body starts with whitespace (newlines sent every 15 seconds), and then comes the JSON answer — or, if the request failed after that point, the protocol's own error object with the code and message it would otherwise have had. Absent on responses that finished sooner, which are unchanged. */
+        SpicyKeepalive: "1";
         /** @description Capacity of the active account-level rate-limit window. */
         RateLimitLimit: number;
         /** @description Remaining requests in the active window. */
@@ -2326,6 +2809,36 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    importLoraFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoraImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Ready tenant-scoped file reference. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCommitEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     createDownloadUrl: {
         parameters: {
             query?: never;
@@ -2356,6 +2869,254 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["ServerError"];
+        };
+    };
+    listAssets: {
+        parameters: {
+            query?: {
+                kind?: "image" | "video" | "audio";
+                /** @description Comma-separated list of task_output, upload and url. */
+                source?: string;
+                /** @description Case-insensitive substring of the asset name. */
+                q?: string;
+                /** @description Only favorites (true) or only assets that are not favorites (false). */
+                favorite?: boolean;
+                /** @description Only assets in this collection of the same library (404 when it is not one). */
+                collectionId?: string;
+                /** @description Only the images of this character in the same library; an unknown id returns an empty page. */
+                entityId?: string;
+                sort?: "recent" | "oldest" | "name" | "size";
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of assets. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "private, no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetListEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    createAsset: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The saved (or already saved) asset. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getAssetUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plan, usage and limits. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "private, no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetQuotaEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getAsset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The asset. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "private, no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteAsset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetDeletedEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    renameAsset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    favorite?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The renamed asset. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listAssetCharacters: {
+        parameters: {
+            query?: {
+                /** @description Only character exists today; omitting it means character. */
+                kind?: "character";
+                /** @description Only characters that contain this asset. */
+                assetId?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of characters. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "private, no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetEntityListEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getAssetCharacter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entityId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The character. */
+            200: {
+                headers: {
+                    "Cache-Control"?: "private, no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetEntityEnvelope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
         };
     };
     listOpenAIModels: {
@@ -2406,6 +3167,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
+                    "X-Spicy-Keepalive": components["headers"]["SpicyKeepalive"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2445,6 +3207,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
+                    "X-Spicy-Keepalive": components["headers"]["SpicyKeepalive"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2484,6 +3247,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
+                    "X-Spicy-Keepalive": components["headers"]["SpicyKeepalive"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2525,6 +3289,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
+                    "X-Spicy-Keepalive": components["headers"]["SpicyKeepalive"];
                     [name: string]: unknown;
                 };
                 content: {

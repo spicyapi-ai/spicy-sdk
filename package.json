@@ -1,6 +1,6 @@
 {
   "name": "@spicyapi/sdk",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Official TypeScript SDK and typed public API contract for SpicyAPI",
   "type": "module",
   "license": "MIT",
@@ -10,7 +10,7 @@
   },
   "homepage": "https://spicyapi.ai",
   "bugs": {
-    "url": "https://github.com/spicyapi-ai/spicy-sdk/issues"
+    "url": "https://spicyapi.ai/contact"
   },
   "publishConfig": {
     "access": "public"
@@ -48,8 +48,9 @@
   },
   "devDependencies": {
     "@types/node": "26.4.0",
+    "openai": "^7.10.0",
     "prettier": "3.9.6",
     "typescript": "5.9.3",
-    "openai": "^7.10.0"
+    "yaml": "2.9.0"
   }
 }

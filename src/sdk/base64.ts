@@ -23,6 +23,7 @@ const supported: Record<UploadContentType, true> = {
   "application/vnd.apple.numbers": true,
   "text/plain": true,
   "text/markdown": true,
+  "application/octet-stream": true,
 };
 
 // Large assets go through the direct-upload pipeline; the task JSON never carries a whole Base64

@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { SDK_VERSION } from "../generated/package-version.js";
+import { SpicyAssets } from "./assets.js";
 import { decodeBase64Media } from "./base64.js";
 import { unusedProxyHint } from "./env-proxy.js";
+import { requireIdentifier } from "./identifiers.js";
 import { MAX_API_RESPONSE_BYTES, describeForeignBody, readResponseText } from "./response-body.js";
 export { MAX_API_RESPONSE_BYTES } from "./response-body.js";
 
@@ -120,6 +122,8 @@ const CONTENT_TYPES_BY_EXTENSION = {
   ".numbers": "application/vnd.apple.numbers",
   ".txt": "text/plain",
   ".md": "text/markdown",
+  // LoRA weights, for `loras[].path`; commit checks that the file is a complete safetensors file.
+  ".safetensors": "application/octet-stream",
 } as const satisfies Record<string, UploadContentType>;
 
 /* Fails to compile when the contract accepts an upload type that no extension maps to. The upload
@@ -153,13 +157,14 @@ function normalizeBaseUrl(value: string, label: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
-function requireIdentifier(value: string, label: string): string {
-  const normalized = value.trim();
-  if (!normalized) throw new TypeError(`${label} is required`);
-  if (normalized.includes("\r") || normalized.includes("\n")) {
-    throw new TypeError(`${label} must not contain line breaks`);
-  }
-  return normalized;
+/**
+ * A failure envelope may carry `data: {"reason": "<code>"}`. Any non-empty string is passed
+ * through verbatim, so a reason added on the server later still reaches the caller.
+ */
+function failureReason(data: unknown): string | undefined {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return undefined;
+  const reason = (data as { reason?: unknown }).reason;
+  return typeof reason === "string" && reason.length > 0 ? reason : undefined;
 }
 
 function parseIntegerHeader(value: string | null): number | undefined {
@@ -330,6 +335,13 @@ export class SpicyClient {
   private readonly sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   private readonly onResponse: SpicyClientOptions["onResponse"];
 
+  /**
+   * The asset library the key reaches — personal, or the team's shared library for a team key: save
+   * files once and reference them as `spicy://a/<id>` in any media field of model inputs sent with
+   * keys of the same workspace, until they are deleted.
+   */
+  readonly assets: SpicyAssets;
+
   constructor(options: SpicyClientOptions = {}) {
     this.onResponse = options.onResponse;
     const configuredKey = options.apiKey ?? process.env.SPICY_API_KEY;
@@ -374,6 +386,10 @@ export class SpicyClient {
     }
     if (typeof this.transport !== "function")
       throw new TypeError("a fetch implementation is required");
+    this.assets = new SpicyAssets({
+      request: (method, path, configuration) => this.apiRequest(method, path, configuration),
+      uploadFile: (filePath, options) => this.uploadFile(filePath, options),
+    });
   }
 
   /**
@@ -698,7 +714,7 @@ export class SpicyClient {
   }
 
   private async apiRequest<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     path: string,
     configuration: RequestConfiguration = {},
   ): Promise<T> {
@@ -770,6 +786,7 @@ export class SpicyClient {
     }
     if (!response.ok || code !== 200) {
       const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"), this.now());
+      const reason = failureReason(envelope.data);
       throw new SpicyApiError(
         typeof envelope.msg === "string" && envelope.msg
           ? envelope.msg
@@ -781,6 +798,7 @@ export class SpicyClient {
           ...(retryAfterMs === undefined ? {} : { retryAfterSeconds: retryAfterMs / 1_000 }),
           ...(rateLimitLimit === undefined ? {} : { rateLimitLimit }),
           ...(rateLimitRemaining === undefined ? {} : { rateLimitRemaining }),
+          ...(reason === undefined ? {} : { reason }),
         },
       );
     }

@@ -1,4 +1,4 @@
-import type { components } from "../generated/openapi.js";
+import type { components, operations } from "../generated/openapi.js";
 
 export type ApiModel = components["schemas"]["APIModel"];
 export type ApiModelPrice = components["schemas"]["APIModelPrice"];
@@ -197,3 +197,114 @@ export interface UploadFileOptions extends RequestOptions {
 }
 
 export type TaskQuote = components["schemas"]["TaskQuoteResponse"];
+
+export type Asset = components["schemas"]["Asset"];
+export type AssetKind = Asset["kind"];
+export type AssetSource = Asset["source"];
+export type AssetList = components["schemas"]["AssetList"];
+export type AssetPlan = components["schemas"]["AssetPlan"];
+/**
+ * Plan, usage and limits of the allowance behind the key's library. `lifetimeTopupUsd` and
+ * `topupToNextTierUsd` are omitted when `scope.canTopUp` is false (a team key whose creator is not
+ * the owner), so read them as optional.
+ */
+export type AssetUsage = components["schemas"]["AssetQuota"];
+/** Which library the key reaches — personal, or a team's shared one — and what it may do there. */
+export type AssetScope = components["schemas"]["AssetScope"];
+export type AssetRole = AssetScope["role"];
+export type AssetDeleted = components["schemas"]["AssetDeletedEnvelope"]["data"];
+
+/** Fields every save request may carry, whatever the source. */
+export interface CreateAssetCommon {
+  /** Up to 80 characters; the server defaults to "Saved asset". */
+  name?: string | undefined;
+}
+
+/**
+ * Where the saved file comes from. Exactly one source per request:
+ *
+ * - `task_output`: one of your own successful tasks (with a team key, one of the team's), picked by
+ *   output `key` or zero-based `index` (the order of `output.assets` in the task record).
+ * - `upload`: a committed upload, as `fil_…` or `spicy://f/fil_…`.
+ * - `url`: a public `http` or `https` address on port 80 or 443, without credentials. The server
+ *   downloads it once and reads the type from the file itself.
+ */
+export type CreateAssetInput =
+  | (CreateAssetCommon & {
+      source: "task_output";
+      taskId: string;
+      key?: string | undefined;
+      index?: number | undefined;
+    })
+  | (CreateAssetCommon & { source: "upload"; fileId: string })
+  | (CreateAssetCommon & { source: "url"; url: string });
+
+export interface CreateAssetOptions extends RequestOptions {
+  /**
+   * Sent as `Idempotency-Key`, which the server requires on every save. A fresh UUID is used when
+   * omitted; pass your own to replay the same save safely after an uncertain response, for example
+   * across a process restart. The server binds the key to the exact request for 24 hours.
+   */
+  idempotencyKey?: string | undefined;
+}
+
+/**
+ * Order of an asset listing: `recent` (the default, newest first), `oldest`, `name` (A to Z,
+ * ignoring case) or `size` (largest first).
+ */
+export type AssetSort = NonNullable<
+  NonNullable<operations["listAssets"]["parameters"]["query"]>["sort"]
+>;
+
+export interface ListAssetsOptions extends RequestOptions {
+  kind?: AssetKind | undefined;
+  /** One source, or several; several are sent comma-separated. */
+  source?: AssetSource | readonly AssetSource[] | undefined;
+  /** Case-insensitive substring of the asset name, up to 80 characters. */
+  q?: string | undefined;
+  /** `true` lists only favorites, `false` only assets that are not favorites. */
+  favorite?: boolean | undefined;
+  /**
+   * Only the assets in this folder (a collection of the same library). Folders are created and
+   * edited in the console; an id outside the key's library is answered with 404.
+   */
+  collectionId?: string | undefined;
+  /** Only the images of this character (see `assets.characters`); an unknown id gives an empty page. */
+  entityId?: string | undefined;
+  /** Defaults to `recent`. A cursor only works with the `sort` it came from. */
+  sort?: AssetSort | undefined;
+  /**
+   * Pass the previous page's `nextCursor` unchanged, with the same `sort`; never construct one. A
+   * cursor sent with a different `sort` is rejected with 400.
+   */
+  cursor?: string | undefined;
+  /** Page size, 1–100; the server defaults to 100. */
+  limit?: number | undefined;
+}
+
+/**
+ * What to change on an asset: its `name` (1–80 characters), its `favorite` mark, or both. Only
+ * the fields you pass change, and the `uri` stays the same. Favorites belong to the library, so
+ * everyone in a team sees the same ones.
+ */
+export type UpdateAssetInput =
+  | { name: string; favorite?: boolean | undefined }
+  | { name?: string | undefined; favorite: boolean };
+
+/** A named, ordered set of images in the library, as `GET /api/v1/assets/entities` returns it. */
+export type AssetCharacter = components["schemas"]["AssetEntity"];
+export type AssetCharacterList = components["schemas"]["AssetEntityListEnvelope"]["data"];
+
+export interface ListAssetCharactersOptions extends RequestOptions {
+  /** Only the characters that contain this asset, as `ast_…` or `spicy://a/ast_…`. */
+  assetId?: string | undefined;
+  /** Pass the previous page's `nextCursor` unchanged; never construct one. */
+  cursor?: string | undefined;
+  /** Page size, 1–100; the server defaults to 50. */
+  limit?: number | undefined;
+}
+
+export interface SaveAssetFileOptions extends UploadFileOptions {
+  /** Defaults to the file's base name, cut to 80 characters. */
+  name?: string | undefined;
+}

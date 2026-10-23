@@ -25,23 +25,25 @@ everything:
 
 ## What you can do with it
 
-| What you want to do                                            | Method                                        | Costs money?       |
-| -------------------------------------------------------------- | --------------------------------------------- | ------------------ |
-| Check that SpicyAPI is reachable (no key needed)               | `getStatus`                                   | No                 |
-| See the live model list, your prices and each model's fields   | `listModels` / `getModel`                     | No                 |
-| Get the exact price of a request without creating anything     | `quoteTask`                                   | No                 |
-| Start a generation                                             | `createTask`                                  | **Yes**            |
-| Start a generation and wait for the result in one call         | `run`                                         | **Yes**            |
-| Read a task once, or wait until it finishes                    | `getTask` / `waitForTask`                     | No                 |
-| Try a failed task again, as a new task                         | `retryTask`                                   | **Yes**            |
-| List the tasks created with the current key                    | `listTasks`                                   | No                 |
-| Check your balance, or what the current key spent              | `getBalance` / `getUsage`                     | No                 |
-| Upload a local image, video, audio or document file            | `uploadFile` / `uploadBytes` / `uploadBase64` | No                 |
-| Upload in separate steps (ticket, PUT, commit)                 | `createUploadUrl` / `commitUploadedFile`      | No                 |
-| Get a fresh download link for a result                         | `createDownloadUrl`                           | No                 |
-| Destroy a finished task's stored files and prompt              | `purgeTask`                                   | No (and no refund) |
-| Check that a webhook really came from SpicyAPI                 | `verifyWebhook` / `computeWebhookSignature`   | No                 |
-| Search the documentation, or read the bundled OpenAPI contract | `searchDocumentation` / `readOpenApiContract` | No                 |
+| What you want to do                                            | Method                                                             | Costs money?       |
+| -------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------ |
+| Check that SpicyAPI is reachable (no key needed)               | `getStatus`                                                        | No                 |
+| See the live model list, your prices and each model's fields   | `listModels` / `getModel`                                          | No                 |
+| Get the exact price of a request without creating anything     | `quoteTask`                                                        | No                 |
+| Start a generation                                             | `createTask`                                                       | **Yes**            |
+| Start a generation and wait for the result in one call         | `run`                                                              | **Yes**            |
+| Read a task once, or wait until it finishes                    | `getTask` / `waitForTask`                                          | No                 |
+| Try a failed task again, as a new task                         | `retryTask`                                                        | **Yes**            |
+| List the tasks created with the current key                    | `listTasks`                                                        | No                 |
+| Check your balance, or what the current key spent              | `getBalance` / `getUsage`                                          | No                 |
+| Upload a local image, video, audio or document file            | `uploadFile` / `uploadBytes` / `uploadBase64`                      | No                 |
+| Upload in separate steps (ticket, PUT, commit)                 | `createUploadUrl` / `commitUploadedFile`                           | No                 |
+| Get a fresh download link for a result                         | `createDownloadUrl`                                                | No                 |
+| Destroy a finished task's stored files and prompt              | `purgeTask`                                                        | No (and no refund) |
+| Keep a file for later requests in your asset library           | `assets.create` / `assets.uploadFile`                              | No                 |
+| Find, rename or delete saved assets; check your storage plan   | `assets.list` / `assets.update` / `assets.delete` / `assets.usage` | No                 |
+| Check that a webhook really came from SpicyAPI                 | `verifyWebhook` / `computeWebhookSignature`                        | No                 |
+| Search the documentation, or read the bundled OpenAPI contract | `searchDocumentation` / `readOpenApiContract`                      | No                 |
 
 "Costs money" means the call holds funds from your balance. You are charged only if the task
 succeeds, never more than the held amount; failed and expired tasks release the hold in full. The
@@ -282,9 +284,10 @@ stops your request or wait, never an accepted task. API responses larger than 4 
 
 `uploadFile` detects the type from the extension: `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.mp4`,
 `.webm`, `.mp3` and `.wav` for media, and `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`,
-`.key`, `.pages`, `.numbers`, `.txt` and `.md` for reference documents. For other names pass
-`contentType`; otherwise it throws a `TypeError` that lists every supported extension. Images may be
-up to 10 MiB; audio, video and documents up to 90 MiB.
+`.key`, `.pages`, `.numbers`, `.txt` and `.md` for reference documents, and `.safetensors` for LoRA
+weights (`loras[].path`). For other names pass `contentType`; otherwise it throws a `TypeError` that
+lists every supported extension. Images may be up to 10 MiB; audio, video and documents up to 90
+MiB; LoRA weights up to 2 GiB.
 
 `createTask` and `run` accept `retentionSeconds`, sent as `X-Spicy-Retention`, to shorten how long
 that one task's generated media, result payload, prompt and other input text are kept; billing
@@ -323,24 +326,25 @@ unpublished third-party wrapper as an official SDK.
 A failed **call** throws. A failed **task** does not: `run` and `waitForTask` return it with
 `state: "failed"` and an `errorCode`, and it is not charged.
 
-| Error class                     | Meaning                                                                         | Useful fields                                                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `SpicyApiError`                 | SpicyAPI answered with an error                                                 | `code` (business code, e.g. `40201`), `status`, `message`, `requestId`, `retryAfterSeconds`, `rateLimitLimit`, `rateLimitRemaining` |
-| `SpicyTransportError`           | No usable response: network failure or a response over 4 MiB                    | `cause`                                                                                                                             |
-| `SpicyTimeoutError`             | One request exceeded `timeoutMs` or `uploadTimeoutMs` (a `SpicyTransportError`) | `timeoutMs`                                                                                                                         |
-| `SpicyWaitTimeoutError`         | `run` or `waitForTask` ran out of time. **The task is still running**           | `taskId`, `timeoutMs`, `lastTask`                                                                                                   |
-| `SpicyUploadError`              | Storage rejected the uploaded bytes, or the file exceeds the ticket limit       | `status`                                                                                                                            |
-| `SpicyWebhookVerificationError` | A webhook failed verification                                                   | `reason`                                                                                                                            |
-| `TypeError`                     | Invalid call: no key, an option out of range, an empty ID. Nothing was sent     | `message`                                                                                                                           |
+| Error class                     | Meaning                                                                         | Useful fields                                                                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SpicyApiError`                 | SpicyAPI answered with an error                                                 | `code` (business code, e.g. `40201`), `status`, `message`, `requestId`, `retryAfterSeconds`, `rateLimitLimit`, `rateLimitRemaining`, `reason` |
+| `SpicyTransportError`           | No usable response: network failure or a response over 4 MiB                    | `cause`                                                                                                                                       |
+| `SpicyTimeoutError`             | One request exceeded `timeoutMs` or `uploadTimeoutMs` (a `SpicyTransportError`) | `timeoutMs`                                                                                                                                   |
+| `SpicyWaitTimeoutError`         | `run` or `waitForTask` ran out of time. **The task is still running**           | `taskId`, `timeoutMs`, `lastTask`                                                                                                             |
+| `SpicyUploadError`              | Storage rejected the uploaded bytes, or the file exceeds the ticket limit       | `status`                                                                                                                                      |
+| `SpicyWebhookVerificationError` | A webhook failed verification                                                   | `reason`                                                                                                                                      |
+| `TypeError`                     | Invalid call: no key, an option out of range, an empty ID. Nothing was sent     | `message`                                                                                                                                     |
 
-Branch on `code`, never on `message`, and quote `requestId` to support. Common codes: `400` invalid
-input (compare with the schema), `40003` the uploaded bytes do not match their upload ticket,
-`40004` no deployment can serve this parameter combination, `401` key problem, `40201` balance too
-low, `40202` spend cap reached, `40301` key may not use this model, `40310` the account's email
-address is not verified yet (open the verification link; the key starts working as soon as it is
-verified, with no change on your side), `40901` quote expired or price changed (quote again), `429`
-too many requests (wait `retryAfterSeconds`), `503` a dependency is temporarily unavailable, `50301`
-model unavailable right now, `50302` a synchronous generation failed upstream and was refunded.
+Branch on `code` (or on `reason` when present), never on `message`, and quote `requestId` to
+support. Common codes: `400` invalid input (compare with the schema), `40003` the uploaded bytes do
+not match their upload ticket, `40004` no deployment can serve this parameter combination, `401` key
+problem, `40201` balance too low, `40202` spend cap reached, `40301` key may not use this model,
+`40310` the account's email address is not verified yet (open the verification link; the key starts
+working as soon as it is verified, with no change on your side), `40901` quote expired or price
+changed (quote again), `429` too many requests (wait `retryAfterSeconds`), `503` a dependency is
+temporarily unavailable, `50301` model unavailable right now, `50302` a synchronous generation
+failed upstream and was refunded.
 
 The four codes that need a specific move rather than a plain retry:
 
@@ -480,6 +484,122 @@ Layer decomposition results put a `layer` object on each asset (`TaskOutputAsset
 is the base image with `zIndex` 0; every other asset is a transparent PNG layer. Stack them by
 ascending `zIndex`, placing each one inside its `boundingBox` (`[x1, y1, x2, y2]` in base-image
 pixels) when the model reports one.
+
+## Asset library
+
+An upload's `spicy://` URI lasts one day. Files you use again and again — a character portrait, a
+style reference, a voice sample — belong in your asset library instead: each saved file gets a
+stable `uri` of the form `spicy://a/<id>` that works in any media field of model inputs sent with
+keys of the same workspace, until it is deleted. The library never hands out a public or permanent
+link.
+
+The key decides the library. A key created in your personal workspace reaches your personal library;
+a key created in a team workspace, by any member, reaches that team's shared library and never
+anyone's personal one. With a team key, what may change follows the current role of the member who
+created it: owner and admin can save, rename, favorite and delete anything; developer can save, and
+rename, favorite or delete what they saved; billing and readonly can only read and use assets.
+
+```js
+import { SpicyClient } from "@spicyapi/sdk";
+
+const client = new SpicyClient();
+
+// Save the first output of one of your successful tasks (with a team key, one of the team's).
+// { source: "url", url } and { source: "upload", fileId } work the same way. The required
+// Idempotency-Key is added for you.
+const hero = await client.assets.create({
+  source: "task_output",
+  taskId: "job_...",
+  index: 0,
+  name: "Hero portrait",
+});
+
+// Or upload a local file and save it in one call; the name defaults to the file name.
+const voice = await client.assets.uploadFile("./voice-sample.wav");
+
+// Later, in any request: the uri goes where the model's schema expects a file.
+const input = { prompt: "Slow push-in, light rain", image_url: hero.uri };
+
+// Every saved image, newest first, across all pages.
+for await (const asset of client.assets.listAll({ kind: "image", q: "portrait" })) {
+  console.log(asset.uri, asset.name, asset.bytes);
+}
+```
+
+| Method                                                                                    | Returns                                                                                          |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `assets.create(source, { idempotencyKey })`                                               | The saved asset: `id`, `uri`, `name`, `kind`, `bytes`, `favorite`, `model`, `previewUrl`, …      |
+| `assets.uploadFile(path, { name, contentType })`                                          | Uploads with `uploadFile`, then saves; the saved asset                                           |
+| `assets.list({ kind, source, q, favorite, collectionId, entityId, sort, cursor, limit })` | One page: `items`, `nextCursor` (absent on the last page)                                        |
+| `assets.listAll(filters)`                                                                 | An async iterator over every matching asset                                                      |
+| `assets.get(id)`                                                                          | One asset with a fresh `previewUrl`                                                              |
+| `assets.update(id, { name, favorite })`                                                   | The updated asset; only the fields you pass change, the `uri` stays the same                     |
+| `assets.delete(id)`                                                                       | `{ id, deleted: true }`; the `uri` stops working at once                                         |
+| `assets.usage()`                                                                          | `scope` (which library, role, `canWrite`, `canTopUp`), plan, usage                               |
+| `assets.characters.list({ assetId, cursor, limit })` / `listAll(filters)`                 | Characters, newest first: `id`, `name`, `note`, `cover`, `assets` (the images in order), `count` |
+| `assets.characters.get(id)`                                                               | One character with its images in order                                                           |
+
+- `id` may be the bare `ast_…` id or the `spicy://a/…` reference.
+- `sort` is `recent` (the default, newest first), `oldest`, `name` or `size`. A `nextCursor` only
+  works with the `sort` it came from; sending it with another one fails with `400`. `listAll` keeps
+  your filters and `sort` on every page.
+- Saving the same task output, upload or URL again returns the asset you already have. Pass your own
+  `idempotencyKey` to replay a save safely after an uncertain response, for example across a
+  restart.
+- `previewUrl` is a private preview signed for at most 20 minutes. Show it; store `uri`.
+- Storage unlocks with the owner's lifetime top-ups, and the owner's personal and team libraries
+  share one allowance. `assets.usage()` reports the whole allowance; with a team key whose creator
+  is not the owner, `scope.canTopUp` is false and `lifetimeTopupUsd` and `topupToNextTierUsd` are
+  omitted, so treat both as optional.
+- A refused call throws `SpicyApiError` with a `reason`: `asset_library_locked`,
+  `asset_library_full` and `asset_file_too_large` (400, plan limits — read `assets.usage()` for the
+  numbers), `asset_daily_limit` (429, resets at 00:00 UTC, with `retryAfterSeconds`),
+  `asset_storage_full` (503, temporary), `asset_permission_denied` (403, the team role does not
+  allow this change) and `asset_workspace_forbidden` (403, this key cannot reach that library, for
+  example because its creator left the team). The list, which matches the contract, is exported as
+  `ASSET_ERROR_REASONS`; `reason` carries any other value the server sends unchanged, so keep a
+  default branch.
+
+```js
+import { SpicyApiError } from "@spicyapi/sdk";
+
+try {
+  await client.assets.create({ source: "url", url: "https://example.com/still.png" });
+} catch (error) {
+  if (error instanceof SpicyApiError && error.reason === "asset_library_full") {
+    const usage = await client.assets.usage();
+    console.log(`Full on ${usage.tier.name}; next plan: ${usage.nextTier?.name ?? "none"}`);
+  } else {
+    throw error;
+  }
+}
+```
+
+### Favorites, folders and characters
+
+Every asset has a `favorite` flag; in a team library everyone sees the same favorites. Folders
+(collections in the API) and characters are created and arranged on the Assets page of the web app;
+the API reads them. Each asset also carries `model` and `modelName`, the model that generated it
+(empty strings for uploads and links).
+
+```js
+// Mark a favorite, then list only favorites in one folder, A to Z.
+await client.assets.update(hero.uri, { favorite: true });
+const page = await client.assets.list({ favorite: true, collectionId: "col_...", sort: "name" });
+
+// A character is a named, ordered set of images. Put its images, in order, into the model's
+// reference image field (getModel shows which field takes a list of images).
+const mia = await client.assets.characters.get("ety_...");
+const references = mia.assets.map((image) => image.uri); // ["spicy://a/ast_...", ...]
+```
+
+An unknown folder, and an unknown character, both fail with `404`. Characters used to be called
+personas: existing `spicy://p/<id>` references keep resolving to the same images, in your personal
+library only; new code should use the `spicy://a/` references a character lists.
+
+See the asset library guide:
+[organizing](https://docs.spicyapi.ai/docs/media#asset-library-organize) and
+[characters](https://docs.spicyapi.ai/docs/media#asset-library-characters).
 
 ## Webhooks
 

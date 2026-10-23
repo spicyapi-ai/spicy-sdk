@@ -141,8 +141,22 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
       "size limit",
       "public https media",
       "signed result url",
+      "asset library",
+      "assets",
+      "saved assets",
+      "spicy://a",
+      "keep files",
+      "reuse reference",
+      "favorites",
+      "folders",
+      "collections",
+      "characters",
+      "persona",
+      "spicy://p",
       "document",
       "pdf",
+      "lora",
+      "safetensors",
     ],
   },
   {
@@ -210,6 +224,8 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
       "multi-turn",
       "conversation history",
       "tool calling",
+      "function calling",
+      "recipes",
       "examples",
     ],
   },
@@ -226,6 +242,41 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
     summary:
       "Which official tool to use, and a production runbook for AI agents, backend workers and repeatable media pipelines.",
     keywords: ["agent", "mcp", "sdk", "cli", "tool", "packages", "runbook"],
+  },
+  {
+    slug: "comfyui",
+    title: "ComfyUI nodes",
+    summary:
+      "Run SpicyAPI's image, video and audio models as ComfyUI nodes. Install the node pack, add your key, run your first node and keep every run's cost in view.",
+    keywords: ["comfyui", "comfy", "node pack", "custom nodes", "lora node"],
+  },
+  {
+    slug: "sillytavern",
+    title: "SillyTavern",
+    summary:
+      "Chat with SpicyAPI models in SillyTavern through the Custom (OpenAI-compatible) source, then add the free SpicyAPI extension for pictures, videos and an Animate button, with every run priced first.",
+    keywords: ["sillytavern", "silly tavern", "tavern", "extension", "custom openai compatible"],
+  },
+  {
+    slug: "roleplay-frontends",
+    title: "Roleplay apps (RisuAI, Agnai, Chub, KoboldAI Lite, Janitor AI)",
+    summary:
+      "Connect SpicyAPI's text models to RisuAI, Agnai, Chub, KoboldAI Lite and Janitor AI. Exact fields for each app, which models suit roleplay, how to handle reasoning models, and how to cap spending.",
+    keywords: ["roleplay", "role-play", "risuai", "agnai", "chub", "koboldai", "janitor ai"],
+  },
+  {
+    slug: "chat-bots",
+    title: "Telegram and Discord bot",
+    summary:
+      "Run your own private bot that makes images and videos, animates pictures and chats with characters you define, paid from your SpicyAPI balance with spending limits checked before every charge.",
+    keywords: ["telegram", "discord", "bot", "chat bot", "self-hosted bot"],
+  },
+  {
+    slug: "n8n",
+    title: "n8n",
+    summary:
+      "Use SpicyAPI's image, video, audio and chat models in n8n workflows. Install the community node, import the HTTP Request templates, or point n8n's OpenAI credential at SpicyAPI for AI Agent nodes.",
+    keywords: ["n8n", "automation", "community node", "http request node", "no-code"],
   },
   {
     slug: "guide-image-to-video",

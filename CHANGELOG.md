@@ -1,5 +1,71 @@
 # @spicyapi/sdk
 
+## 0.9.0
+
+### Minor Changes
+
+- Add the asset library: keep files in a library and reference them as `spicy://a/<id>` in any media
+  field of model inputs sent with keys of the same workspace, until they are deleted. An upload's
+  `spicy://` URI lasts one day; a saved asset does not expire. The key decides the library: a
+  personal key reaches the personal library, a team key that team's shared library, where the
+  creator's current role decides what may change.
+
+  - SDK: `client.assets.create`, `list`, `listAll` (an async iterator that follows `nextCursor`),
+    `get`, `update`, `delete`, `usage`, and `uploadFile`, which uploads a local file and saves it in
+    one call. `create` sends the required `Idempotency-Key` itself (pass `idempotencyKey` to replay
+    a save), which also makes its transport retry safe. Asset ids are accepted as `ast_…` or as the
+    `spicy://a/…` reference.
+  - `SpicyApiError` gains `reason`, read from a failure envelope's `data.reason`. The asset library
+    uses `asset_library_locked`, `asset_library_full`, `asset_file_too_large`, `asset_daily_limit`,
+    `asset_storage_full`, `asset_permission_denied` and `asset_workspace_forbidden` (exported as
+    `ASSET_ERROR_REASONS`, with `isAssetErrorReason`, and kept equal to the contract's enum); any
+    other value is passed through unchanged. `AssetUsage` carries `scope` (`AssetScope`: library,
+    role, `canWrite`, `canTopUp`), and `lifetimeTopupUsd` / `topupToNextTierUsd` are optional
+    because they are omitted when `canTopUp` is false.
+  - CLI: `spicyapi assets list | get | save | rename | delete | usage`. `save` takes one of
+    `--task <id> [--index n | --key k]`, `--file <path>`, `--url <url>` or `--file-id <id>`;
+    `delete` asks first or takes `--yes`. Errors carry `reason` in `--json` output, and the `Next:`
+    line follows the reason (a full library is a plan limit, not a schema problem). `assets usage`
+    names the library and role the key acts with, and leaves upgrades to the team owner when the key
+    cannot top up.
+  - MCP: five tools — `spicyapi_assets_list`, `spicyapi_asset_save` (task output, local path under
+    the upload roots, URL or committed upload), `spicyapi_asset_rename`, `spicyapi_asset_delete`
+    (always confirmed) and `spicyapi_assets_usage_get`, which returns `scope`. Tool errors include
+    `reason`.
+  - Skill: the asset library workflow, its error reasons, and asset deletion in the cleanup rules.
+  - The bundled OpenAPI contract is synchronised with the server, including the asset routes, and
+    the documentation index covers five more pages (ComfyUI, SillyTavern, roleplay apps, Telegram
+    and Discord bots, n8n).
+
+- Organize the asset library and read its characters. Assets now carry `favorite`, `model` and
+  `modelName` (the model that generated them; empty for uploads and links). Folders (collections)
+  and characters are created on the Assets page of the web app; the API reads them. Personas became
+  characters on 2026-10-12, and existing `spicy://p/<id>` references keep resolving to the same
+  images in the personal library.
+
+  - SDK: `assets.list` and `listAll` take `favorite`, `collectionId` (one folder; an unknown folder
+    is a 404), `entityId` (one character's images) and `sort` (`recent`, `oldest`, `name`, `size`;
+    exported as `AssetSort`). A cursor only works with the sort it came from, and `listAll` repeats
+    the filters and sort on every page. `assets.update` changes `name`, `favorite` or both and sends
+    only what you pass. New `assets.characters.list({ assetId, cursor, limit })`, `listAll` and
+    `get(id)` return `AssetCharacter` records with their images in order. `ASSET_ERROR_REASONS` adds
+    `asset_entity_name_taken`, matching the contract. `uploadFile` maps `.safetensors` to
+    `application/octet-stream`, the new LoRA weights upload type (up to 2 GiB), and the bundled
+    contract and generated types follow the server, including `POST /api/v1/files/import`.
+  - CLI: `assets list --favorite | --no-favorite`, `--folder <collection-id>`,
+    `--character <character-id>` and `--sort <order>`; `assets favorite <asset>` and
+    `assets unfavorite <asset>`; and `characters list [--asset <asset>] [--all]` and
+    `characters get <id>`, which print each character's images as `spicy://a/` references plus a
+    `References:` array to paste into a model input. A 404 on a folder or a character gets its own
+    `Next:` line. `files upload` accepts `.safetensors` LoRA weights.
+  - MCP: `spicyapi_assets_list` takes `favorite`, `collectionId`, `entityId` and `sort`. Two
+    read-only tools, `spicyapi_characters_list` and `spicyapi_character_get`, return characters with
+    their images in order and tell the agent to put those `spicy://a/` references, in order, into
+    the model's reference image field — for 22 tools in total. `spicyapi_upload_file` accepts
+    `.safetensors` LoRA weights.
+  - Skill: favorites, folders, sorting and characters in the asset library workflow, including that
+    folders and characters are made on the web and that `spicy://p/` references still work.
+
 ## 0.8.0
 
 ### Minor Changes
@@ -53,8 +119,8 @@
 
 - Add the four language SDK pages and the image generation guide to the documentation index, so
   `docs search` and `docs read` can reach them. The pages went live on the documentation site
-  earlier; until now this hand-maintained index did not list them, and a search for "python sdk"
-  or "lora" simply returned nothing rather than saying the page was missing.
+  earlier; until now this hand-maintained index did not list them, and a search for "python sdk" or
+  "lora" simply returned nothing rather than saying the page was missing.
 
 ## 0.7.4
 
