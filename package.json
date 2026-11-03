@@ -1,6 +1,6 @@
 {
   "name": "@spicyapi/sdk",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Official TypeScript SDK and typed public API contract for SpicyAPI",
   "type": "module",
   "license": "MIT",

@@ -212,6 +212,24 @@ const definitions: Array<Omit<DocumentationEntry, "url">> = [
     ],
   },
   {
+    slug: "realtime-audio",
+    title: "Realtime voice and transcription",
+    summary:
+      "Connect a server-side WebSocket, cap each turn, and reconcile voice responses or committed audio segments with ordinary tasks.",
+    keywords: [
+      "realtime",
+      "websocket",
+      "wss",
+      "voice",
+      "voice agent",
+      "live transcription",
+      "speech to text",
+      "streaming audio",
+      "max_audio_seconds",
+      "openai realtime",
+    ],
+  },
+  {
     slug: "chat-recipes",
     title: "Chat recipes",
     summary:

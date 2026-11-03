@@ -16,6 +16,8 @@ export type TaskState = TaskRecord["state"];
 export type TaskOutputAsset = components["schemas"]["TaskOutputAsset"];
 /** Timing and language details that speech-to-text models add next to the plain `output.text`. */
 export type TaskTranscript = components["schemas"]["TaskTranscript"];
+/** Vectors that embedding models return in `output.embeddings`, in input order. */
+export type TaskEmbeddings = NonNullable<components["schemas"]["TaskOutput"]["embeddings"]>;
 export type CreateTaskResult = components["schemas"]["CreateTaskResponse"];
 export type RetryTaskResult = components["schemas"]["RetryTaskResponse"];
 export type PurgeTaskResult = components["schemas"]["TaskPurgeResponse"];

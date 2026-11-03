@@ -775,6 +775,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/realtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open a metered realtime WebSocket session
+         * @description Uses Bearer API key authentication and a WebSocket upgrade. Every generated
+         *     turn is admitted, reserved and settled as a separate normal task before the
+         *     next turn can run. The handshake and each subsequent turn consume the same
+         *     generation rate-limit bucket as other developer generation requests.
+         *     X-Spicy-Task-Id identifies the first turn; the additive spicy_task_id field
+         *     on native response.created or transcription delta/completed events identifies later turns. Idle connections
+         *     do not reserve a future turn. Conversation and function-call references remain valid
+         *     within this connection. Reusing Idempotency-Key does not replay a live socket.
+         *     max_context_tokens bounds post-instruction history using native truncation;
+         *     system instructions and tool definitions share a separate 4096-token reserve.
+         *     Input transcription requires a separate transcription connection and cannot
+         *     be enabled as an unmetered side effect of a voice conversation.
+         *     Set intent=transcription for standalone transcription: each audio segment is
+         *     reserved before its first append, including models that emit text before commit.
+         *     max_audio_seconds bounds each segment (default 15, range 1 to 60). Commit
+         *     segments explicitly; this transport fixes automatic VAD to null and rejects
+         *     clearing processed audio before settlement. Final duration usage is billed
+         *     as input-audio quantity, separately from output-media duration.
+         *     Audio chunks are stored before delivery. Sessions last at most 30 minutes
+         *     and 256 turns. JSON text events are limited to 1 MiB; an input audio buffer
+         *     is limited to 32 MiB. Server-side WebSocket transport is supported here.
+         */
+        get: operations["connectRealtime"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audio/speech": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate speech as an audio file
+         * @description Uses the normal task admission, idempotency, pricing and settlement pipeline.
+         *     Returns the stored audio bytes only after successful settlement, with no JSON
+         *     wrapper or keepalive bytes. Waits up to two minutes. A timeout does not create
+         *     another task: retry using the same Idempotency-Key or retrieve X-Spicy-Task-Id.
+         *     Supported voices, formats and additional instructions depend on the selected
+         *     text-to-speech model's public schema. Binary audio output is supported here.
+         *     Stored audio is limited to 32 MiB per response; split long, slow uncompressed
+         *     narration into shorter requests.
+         */
+        post: operations["createSpeech"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/embeddings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create vectors with an embedding model
+         * @description Uses the normal task admission, idempotency, routing and settlement pipeline.
+         *     Waits up to two minutes for the accepted task to settle. The task ID is
+         *     returned in X-Spicy-Task-Id; after a timeout retrieve that task or retry with
+         *     the same Idempotency-Key. No second settlement path is used.
+         *     Each request accepts up to 128 inputs. The model page declares token and
+         *     dimension limits. Base64 output contains little-endian float32 values.
+         */
+        post: operations["createEmbedding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/responses": {
         parameters: {
             query?: never;
@@ -1156,6 +1248,14 @@ export interface components {
         TaskOutput: {
             /** @description Text result (chat */
             text?: string;
+            embeddings?: {
+                /** @description Measured input token count from the model response. */
+                inputTokens: number;
+                data: {
+                    index: number;
+                    embedding: number[];
+                }[];
+            };
             transcript?: components["schemas"]["TaskTranscript"];
             assets?: components["schemas"]["TaskOutputAsset"][];
         } & {
@@ -1174,6 +1274,8 @@ export interface components {
             /** @description Length of the transcribed audio in seconds. */
             durationSeconds?: number;
             words?: components["schemas"]["TaskTranscriptWord"][];
+            /** @description Timed phrases, including speaker labels when available; separate from word-level timestamps. */
+            segments?: components["schemas"]["TaskTranscriptWord"][];
             /** @description Present when multichannel transcription was requested; one entry per audio channel. */
             channels?: components["schemas"]["TaskTranscriptChannel"][];
         };
@@ -1215,6 +1317,7 @@ export interface components {
             durationSeconds?: number;
             /** Format: int64 */
             bytes?: number;
+            /** @description What the asset is: `video`, `image`, `audio` or a model-specific role. Video extend endpoints that join the source clip to the new footage return two assets in a fixed order: the joined clip first (`video`), then the newly generated part on its own (`segment`). Endpoints that return only the new part have no `segment` asset. Video translation endpoints return the dubbed clip (`video`); endpoints that also produce a subtitle file of the translated speech add it as a second asset (`subtitle`, `mime` `application/x-subrip`, an `.srt` file), kept for the same retention period as the video. Image to 3D and text to 3D endpoints return one `mesh` asset: a binary glTF file (`mime` `model/gltf-binary`, a `.glb` file with its textures embedded). The download is served as `application/octet-stream`. Vector endpoints (text to SVG, image to SVG) return `image` assets with `mime` `image/svg+xml` (an `.svg` file built from paths). Scripts, event handlers, external references and embedded bitmaps are removed or rejected before delivery, and the file is served as an attachment. */
             role?: string;
             nsfw?: boolean;
             pending?: boolean;
@@ -1435,7 +1538,7 @@ export interface components {
             provider: string;
             /** @enum {string} */
             modality: "image" | "video" | "audio" | "text";
-            /** @description The internal task classification of this one endpoint. Always exactly one element, and it is not always the suffix of `model`: image editing endpoints are published as `.../edit` but classified as `image-to-image`, because renaming the call did not reclassify the work. Use `model` to call, and `tasks[0]` only to group or filter. Other values match their suffix: `text-to-image`, `text-to-video`, `image-to-video`, `reference-to-video`, `video-edit`, `video-extend`, `video-analyze`, `character-animation`, `talking-avatar`, `lip-sync`, `video-to-audio` (returns the same video with a generated sound track), `frame-interpolation` (returns the same video at twice its frame rate, same length and audio), `layer-decomposition` (returns a base image plus transparent layers, see `TaskOutputAsset.layer`), `speech-to-text`, `chat`. New values appear as models are added, so treat the set as open. */
+            /** @description The internal task classification of this one endpoint. Always exactly one element, and it is not always the suffix of `model`: image editing endpoints are published as `.../edit` but classified as `image-to-image`, because renaming the call did not reclassify the work. Use `model` to call, and `tasks[0]` only to group or filter. Other values match their suffix: `text-to-image`, `text-to-video`, `image-to-video`, `reference-to-video`, `video-edit`, `video-extend`, `video-analyze`, `character-animation`, `talking-avatar`, `lip-sync`, `video-to-audio` (returns the same video with a generated sound track), `frame-interpolation` (returns the same video at twice its frame rate, same length and audio), `video-translate` (returns the same video dubbed into another language; some models also re-sync the lips or add a subtitle file as a `subtitle` asset), `layer-decomposition` (returns a base image plus transparent layers, see `TaskOutputAsset.layer`), `image-to-3d` (returns one textured 3D mesh as a binary glTF `.glb` file, asset role `mesh`), `text-to-3d` (the same output, generated from a text prompt), `speech-to-text`, `realtime`, `realtime-transcription`, `audio-to-audio` (returns one processed audio track, for example a speech recording with the noise removed), `chat`. New values appear as models are added, so treat the set as open. */
             tasks: string[];
             async: boolean;
             /** @description Informational model-creator capability metadata only. It does not participate in authorization, availability decisions, or request rejection. */
@@ -1516,6 +1619,15 @@ export interface components {
             aliases?: string[];
             family: string;
             familyPageSlug?: string;
+            /** @description Optional output parameters of this generation endpoint in list responses. Keys are duration_seconds and resolution for video or resolution, size, width, height, aspect_ratio and output_format for images. Values project the public input schema; absence means unknown. Input media limits are not included. */
+            outputSpecs?: {
+                [key: string]: {
+                    enum?: (number | string)[];
+                    minimum?: number;
+                    maximum?: number;
+                    multipleOf?: number;
+                };
+            };
             familyDisplayName?: string;
             displayName: string;
             /** @description The model's creator, for example `ByteDance`. Never an execution channel. */
@@ -1561,12 +1673,23 @@ export interface components {
             offerPercent?: string;
             /** Format: date-time */
             offerEndsAt?: string;
-            /** @description Standard per-million-token prices for text models. */
+            /** @description Per-million-token prices. Parent rates apply to text when separate audio/image rates are present. */
             perMillionTokens?: {
                 input: string;
                 cachedInput?: string;
                 output: string;
                 cacheWrite?: string;
+                /** @description Audio token rates; when present, the parent rates apply to text only. File transcription has only audio input; unsupported cached input and audio output are omitted. */
+                audio?: {
+                    input: string;
+                    cachedInput?: string;
+                    output?: string;
+                };
+                /** @description Image input token rates. This model does not generate images. */
+                image?: {
+                    input: string;
+                    cachedInput: string;
+                };
             };
             /** @description The model creator's own published price, present only when ours is at least 1% lower. It is not our pre-discount price. */
             listPrice?: Record<string, never>;
@@ -3173,6 +3296,161 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ChatCompletion"];
                     "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["OpenAIError"];
+            401: components["responses"]["OpenAIError"];
+            402: components["responses"]["OpenAIError"];
+            403: components["responses"]["OpenAIError"];
+            404: components["responses"]["OpenAIError"];
+            409: components["responses"]["OpenAIError"];
+            413: components["responses"]["OpenAIError"];
+            429: components["responses"]["OpenAIError"];
+            500: components["responses"]["OpenAIError"];
+            503: components["responses"]["OpenAIError"];
+        };
+    };
+    connectRealtime: {
+        parameters: {
+            query: {
+                /** @description Public realtime model or endpoint ID. */
+                model: string;
+                intent?: "realtime" | "transcription";
+                /** @description Transcription only; other budget parameters are rejected in this mode. */
+                max_audio_seconds?: number;
+                max_tokens?: number;
+                /** @description The context cap plus the instruction reserve and output cap must fit 128000 tokens. */
+                max_context_tokens?: number;
+            };
+            header?: {
+                /** @description Stable key for one logical task submission; retained for 24 hours per account and bound to both the submitting API key and normalized request fingerprint. A sibling key receives 409 without the original task ID. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description WebSocket session; response.done (voice) or input_audio_transcription.completed (transcription) carries final measured usage. */
+            101: {
+                headers: {
+                    "X-Spicy-Task-Id"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["OpenAIError"];
+            401: components["responses"]["OpenAIError"];
+            402: components["responses"]["OpenAIError"];
+            403: components["responses"]["OpenAIError"];
+            409: components["responses"]["OpenAIError"];
+            429: components["responses"]["OpenAIError"];
+            503: components["responses"]["OpenAIError"];
+        };
+    };
+    createSpeech: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Stable key for one logical task submission; retained for 24 hours per account and bound to both the submitting API key and normalized request fingerprint. A sibling key receives 409 without the original task ID. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Public text-to-speech model or endpoint ID. */
+                    model: string;
+                    input: string;
+                    voice: string;
+                    /**
+                     * @default mp3
+                     * @enum {string}
+                     */
+                    response_format?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
+                    /** @default 1 */
+                    speed?: number;
+                    /** @description Accepted only when present in the selected model schema. */
+                    instructions?: string;
+                    /**
+                     * @default audio
+                     * @enum {string}
+                     */
+                    stream_format?: "audio";
+                    /** @description Accepted for SDK compatibility; not forwarded. */
+                    user?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Audio bytes, read from the authenticated task's stored output. */
+            200: {
+                headers: {
+                    "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            400: components["responses"]["OpenAIError"];
+            401: components["responses"]["OpenAIError"];
+            429: components["responses"]["OpenAIError"];
+            503: components["responses"]["OpenAIError"];
+        };
+    };
+    createEmbedding: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Stable key for one logical task submission; retained for 24 hours per account and bound to both the submitting API key and normalized request fingerprint. A sibling key receives 409 without the original task ID. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Public embedding model or endpoint ID. */
+                    model: string;
+                    input: string | string[] | number[] | number[][];
+                    dimensions?: number;
+                    /**
+                     * @default float
+                     * @enum {string}
+                     */
+                    encoding_format?: "float" | "base64";
+                    /** @description Accepted for SDK compatibility; not forwarded. */
+                    user?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Embedding vectors in input order, with measured usage. */
+            200: {
+                headers: {
+                    "X-Spicy-Task-Id": components["headers"]["SpicyTaskId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        object?: "list";
+                        model?: string;
+                        data?: {
+                            /** @constant */
+                            object?: "embedding";
+                            index?: number;
+                            embedding?: number[] | string;
+                        }[];
+                        usage?: {
+                            prompt_tokens?: number;
+                            total_tokens?: number;
+                        };
+                    };
                 };
             };
             400: components["responses"]["OpenAIError"];

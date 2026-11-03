@@ -478,7 +478,17 @@ the clearest case: it is an ordinary asynchronous media task, but what it produc
 `output.text` when the model you selected produces text, and do not treat an empty `output.assets`
 as a failure on those models. Speech-to-text models that report more also return `output.transcript`
 (`TaskTranscript`): the detected language, the duration, per-word `start` and `end` times in
-seconds, and one entry per channel when multichannel transcription was requested.
+seconds, timed `segments` (with speaker labels when the model reports them), and one entry per
+channel when multichannel transcription was requested.
+
+Embedding models return their vectors in `output.embeddings`: `inputTokens` and `data[]` with each
+input's `index` and `embedding` array, in input order.
+
+Some assets are neither images nor video. Image-to-3D and text-to-3D models return one asset with
+`role: "mesh"`, a binary glTF `.glb` file (`mime` `model/gltf-binary`, textures embedded). Vector
+models return `image` assets with `mime` `image/svg+xml`. Video translation can add a `subtitle`
+asset (an `.srt` file), and video extension that joins the source clip returns the joined `video`
+first and the newly generated part as `segment`.
 
 Layer decomposition results put a `layer` object on each asset (`TaskOutputAsset`). The first asset
 is the base image with `zIndex` 0; every other asset is a transparent PNG layer. Stack them by
@@ -738,6 +748,12 @@ OpenAI is not the only protocol the text models answer. The same catalogue is re
 Keep the official client you already use and point its base URL at SpicyAPI; validation, pricing and
 availability are identical across the four. This SDK stays with asynchronous media tasks on purpose,
 so there is no chat method to look for here.
+
+Embedding, speech and realtime models have OpenAI-compatible routes as well: `POST /v1/embeddings`
+returns vectors in OpenAI's shape, `POST /v1/audio/speech` returns the audio bytes, and
+`wss://api.spicyapi.ai/v1/realtime` is a server-side WebSocket for live voice and live
+transcription. Each response carries `X-Spicy-Task-Id`, and every turn is an ordinary settled task.
+See the [realtime guide](https://docs.spicyapi.ai/docs/realtime-audio).
 
 See the [complete compatibility guide](https://docs.spicyapi.ai/docs/quotes-and-compatibility) and
 the [official JavaScript client](https://github.com/openai/openai-node).
