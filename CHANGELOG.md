@@ -1,5 +1,16 @@
 # @spicyapi/sdk
 
+## 0.9.1
+
+### Patch Changes
+
+- Follow the November public contract: types for embedding results (`output.embeddings`), timed
+  transcript segments, model `outputSpecs` and audio and image token rates, and the new
+  OpenAI-compatible speech, embeddings and realtime routes; the documentation index now finds the
+  realtime voice and transcription guide. The MCP server summarizes large embedding results instead
+  of returning every vector, and its tool descriptions, like the Skill, explain 3D mesh, SVG,
+  subtitle and segment assets and where realtime, embedding and speech models are served.
+
 ## 0.9.0
 
 ### Minor Changes
